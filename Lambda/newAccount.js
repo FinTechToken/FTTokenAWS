@@ -1,14 +1,14 @@
 'use strict';
 
 var AWS = require('aws-sdk'),
-	uuid = require('uuid'),
+	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
 	documentClient = new AWS.DynamoDB.DocumentClient(),
 	cryptAlgorithm = 'aes-256-ctr',
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
 	key = process.env.HASH_KEY,
-	newToken = uuid.v1(),
+	newToken,
 	respondToRequest, request;
 
 exports.newAccount = function(event, context, callback) {
@@ -17,6 +17,7 @@ exports.newAccount = function(event, context, callback) {
 		return;
 	}
 
+	newToken = uuid();
 	respondToRequest = callback;
 	request = event;
 
@@ -45,7 +46,7 @@ var ifNewKeyCreateAccount = function(err, data) {
 		respondToRequest('DB Error', null);
 	} else {
 		if(data.Item) {
-			respondToRequest('Key Exists: ' + request.account, null);
+			respondToRequest('DB Error', null);
 		} else {
 			documentClient.put(putNewAccount(), sendResponseAfterNewAccount);
 		}
@@ -59,11 +60,11 @@ var putNewAccount = function() {
 		Item: {
 			[process.env.KEY_NAME]: request.account,
 			Encrypted_PrivateKey: encrypt(request.privateKey),
-			Encrypted_Phrase: encrypt(request.phrase),
-			Hashed_Phrase: getHash(request.phrase),
+			Encrypted_Phrase: encrypt(request.account + request.phrase),
+			Hashed_Phrase: getHash(request.account + request.phrase),
 			Encrypted_ID: request.enc_id,
-			Token : newToken,
-			TokenDate : now,
+			aToken : newToken,
+			aTokenDate : now,
 			CreateDate : now
 		}
 	};
