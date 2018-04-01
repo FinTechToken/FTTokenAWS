@@ -1,5 +1,7 @@
 'use strict';
-
+/*
+ { account: PublicEtherAddress, privateKey: PrivateKeyOfEtherAddress, phrase: PassPhrase, enc_id: Ethereum_Encrypted_Id } // Add new account
+*/
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
@@ -8,82 +10,73 @@ var AWS = require('aws-sdk'),
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
 	key = process.env.HASH_KEY,
-	newToken,
-	respondToRequest, request;
+	newToken = uuid(),
+	now = new Date(),
+	respondToRequest, 
+	request;
 
 exports.newAccount = function(event, context, callback) {
-	if(!hasProperFormat(event)) {
+	if(!requestHasProperFormat(event)) {
 		callback('Not Proper Format', null);
 		return;
 	}
 
-	newToken = uuid();
 	respondToRequest = callback;
 	request = event;
 
-	documentClient.get(doesKeyExists(), ifNewKeyCreateAccount);
+	documentClient.get(searchForKey(), createAccountIfNotFound);
 };
 
-var hasProperFormat = function(event) {
-	if(!event.account || !event.privateKey || !event.phrase || !event.enc_id) {
+function requestHasProperFormat(event) {
+	if(!event.account || !event.privateKey || !event.phrase || !event.enc_id)
 		return false;
-	} else {
-		return true;
-	}
-};
+	return true;
+}
 
-var doesKeyExists = function() {
+function searchForKey() {
 	return {
 		TableName: process.env.TABLE_NAME,
 		Key: {
 			[process.env.KEY_NAME]: request.account
 		}
 	};
-};
+}
 
-var ifNewKeyCreateAccount = function(err, data) {
-	if(err) {
+function createAccountIfNotFound(err, data) {
+	if(err)
 		respondToRequest('DB Error', null);
-	} else {
-		if(data.Item) {
+	else if(data.Item)
+		respondToRequest('DB Error', null);
+	else
+		documentClient.put(createNewAccount(), respondWithNewTokenOnSuccess);
+}
+
+	function createNewAccount() {
+		return {
+			TableName: process.env.TABLE_NAME,
+			Item: {
+				[process.env.KEY_NAME]: request.account,
+				Encrypted_PrivateKey: encrypt(request.privateKey),
+				Encrypted_Phrase: encrypt(request.account + request.phrase),
+				Hashed_Phrase: getHash(request.account + request.phrase),
+				Encrypted_ID: request.enc_id,
+				aToken : newToken,
+				aTokenDate : now.toISOString(),
+				CreateDate : now.toISOString()
+			}
+		};
+	}
+
+	function respondWithNewTokenOnSuccess(err, data) {
+		if(err)
 			respondToRequest('DB Error', null);
-		} else {
-			documentClient.put(putNewAccount(), sendResponseAfterNewAccount);
-		}
+		else
+			respondToRequest(null, newToken);
 	}
-};
 
-var putNewAccount = function() {
-	var now = new Date().toISOString();
-	return {
-		TableName: process.env.TABLE_NAME,
-		Item: {
-			[process.env.KEY_NAME]: request.account,
-			Encrypted_PrivateKey: encrypt(request.privateKey),
-			Encrypted_Phrase: encrypt(request.account + request.phrase),
-			Hashed_Phrase: getHash(request.account + request.phrase),
-			Encrypted_ID: request.enc_id,
-			aToken : newToken,
-			aTokenDate : now,
-			CreateDate : now
-		}
-	};
-};
-
-var sendResponseAfterNewAccount = function(err, data) {
-	if(err){
-		respondToRequest('Could not write key: ' + request.account, null);
-	} else {
-		respondToRequest(null, newToken);
-	}
-};
-
+	
 function encrypt(text){
   return crypto.createCipher(cryptAlgorithm,password).update(text,'utf8','hex');
-}
- 
-function decrypt(text){
-  return crypto.createDecipher(cryptAlgorithm,password).update(text,'hex','utf8');
 }
 
 function getHash(text){

@@ -1,5 +1,10 @@
 'use strict';
-
+/*
+  { encrypt: StringToEncrypt }
+  { decrypt: StringToDecrypt }
+  { getHash: StringToHash }
+  { getRandomBytes: NumberBytes }
+*/
 const crypto = require('crypto'),
     cryptAlgorithm = 'aes-256-ctr',
     hashAlgorithm = 'sha256',
@@ -13,18 +18,24 @@ exports.handler = (event, context, callback) => {
       callback(null, decrypt(event.decrypt));
     else if(event.getHash)
       callback(null, getHash(event.getHash));
+    else if(event.getRandomBytes)
+      callback(null, getRandomBytes(event.getRandomBytes));   
     else
       callback('Needs encrypt, decrypt, or getHash', null);
 };
 
-function encrypt(text){
+function encrypt(text) {
   return crypto.createCipher(cryptAlgorithm,password).update(text,'utf8','hex');
 }
  
-function decrypt(text){
+function decrypt(text) {
   return crypto.createDecipher(cryptAlgorithm,password).update(text,'hex','utf8');
 }
 
-function getHash(text){
+function getHash(text) {
   return crypto.createHmac(hashAlgorithm, key).update(text).digest('hex');
+}
+
+function getRandomBytes(bytes) {
+  return crypto.randomBytes(bytes);
 }

@@ -1,123 +1,123 @@
 'use strict';
-
+/*
+  { account: PublicEtherAddress, token: FTToken_Token } // Get New Token within time
+  { account: PublicEtherAddress, token: FTToken_Token, expire: true } // Expire the token
+  { account: PublicEtherAddress, token: FTToken_Token, phrase: Encrypted_Phrase } // Get New Token and Keys outside of time
+*/
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
-	documentClient = new AWS.DynamoDB.DocumentClient(),
+  documentClient = new AWS.DynamoDB.DocumentClient(),
+  now = new Date(),
+  twentyMinutesAgo = new Date(),
 	cryptAlgorithm = 'aes-256-ctr',
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
 	key = process.env.HASH_KEY,
-  newToken,
-  enc_id, enc_pk,
-	respondToRequest, request;
+  newToken = uuid(),
+  enc_id, 
+  enc_pk,
+  respondToRequest, 
+  request;
+
+twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
 
 exports.refreshToken = function(event, context, callback) {
-	if(!hasProperFormat(event)) {
+	if(!requestHasProperFormat(event)) {
 		callback('Not Proper Format', null);
 		return;
 	}
-  newToken = uuid();
+
 	respondToRequest = callback;
 	request = event;
 
-	documentClient.get(doesKeyExists(), ifKeyRefreshToken);
+	documentClient.get(searchForKey(), refreshTokenIfAccountTokenMatch);
 };
 
-var hasProperFormat = function(event) {
-	if(!event.account || !event.token) {
+function requestHasProperFormat(event) {
+	if(!event.account || !event.token)
 		return false;
-	} else {
-		return true;
-	}
-};
+	return true;
+}
 
-var doesKeyExists = function() {
+function searchForKey() {
 	return {
 		TableName: process.env.TABLE_NAME,
 		Key: {
 			[process.env.KEY_NAME]: request.account
 		}
 	};
-};
-
-var ifKeyRefreshToken = function(err, data) {
-	if(err) {
-		respondToRequest('DB Error', null);
-	} else {
-		if(data.Item && data.Item.aToken == request.token && data.Item.aTokenDate) {
-      enc_id = data.Item.Encrypted_ID;
-      enc_pk = data.Item.Encrypted_PrivateKey;
-      var now = new Date();
-      var twentyMinutesAgo = new Date();
-      twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
-      twentyMinutesAgo = twentyMinutesAgo.toISOString();
-      now = now.toISOString();
-      if(twentyMinutesAgo < data.Item.aTokenDate) {
-        if(request.expire) {
-          documentClient.update(putNewToken(twentyMinutesAgo), sendResponseAfterExpireToken);
-        } else {
-          documentClient.update(putNewToken(now), sendResponseAfterNewToken);
-        }
-      } else {
-        if(request.phrase && getHash(data.Item[process.env.KEY_NAME] + request.phrase) == data.Item.Hashed_Phrase) {
-          documentClient.update(putNewToken(now), sendResponseAfterNewToken);
-        } else {
-          shareToken(data.Item);
-        }
-      }
-		} else {
-      respondToRequest('DB Error', null);
-		}
-	}
-};
-
-var putNewToken = function(now) {
-	return {
-    TableName: process.env.TABLE_NAME,
-    Key: {
-      [process.env.KEY_NAME]: request.account
-    },
-    UpdateExpression: "set aToken = :a, aTokenDate=:b",
-    ExpressionAttributeValues:{
-        ":a":newToken,
-        ":b":now
-    }
-	};
-};
-
-var sendResponseAfterExpireToken= function(err, data) {
-  if(err){
-		respondToRequest('Could not write key: ' + request.account, null);
-	} else {
-    respondToRequest(null, {
-      "token" : newToken
-    });	
-	}
-};
-
-var sendResponseAfterNewToken= function(err, data) {
-  if(err){
-		respondToRequest('Could not write key: ' + request.account, null);
-	} else {
-    respondToRequest(null, {
-      "token" : newToken,
-      "enc_id" : enc_id,
-      "privateKey" : decrypt(enc_pk)
-    });	
-	}
-};
-
-var shareToken = function(item) {
-  respondToRequest(null, {
-    "token" : item.aToken,
-    "enc_id" : enc_id
-  });
-};
-
-function encrypt(text){
-  return crypto.createCipher(cryptAlgorithm,password).update(text,'utf8','hex');
 }
+
+function refreshTokenIfAccountTokenMatch(err, data) {
+	if(err)
+		respondToRequest('DB Error', null);
+	else if(isAccountTokenMatch(data.Item))
+    refreshToken(data.Item);
+  else
+    respondToRequest('DB Error', null);
+}
+
+  function isAccountTokenMatch(item) {
+    return(item && item.aToken == request.token && item.aTokenDate);
+  }
+
+  function refreshToken(item) {
+    enc_id = item.Encrypted_ID;
+    enc_pk = item.Encrypted_PrivateKey;
+    if(isRecentToken(item.aTokenDate)) {
+      if(request.expire)
+        documentClient.update(putNewToken(twentyMinutesAgo), respondWithToken);
+      else
+        documentClient.update(putNewToken(now), respondWithKeysAndToken);
+    } else if(hasCorrectPassPhrase(item))
+      documentClient.update(putNewToken(now), respondWithToken);
+    else
+      respondWithTokenAndEnc_ID(item);
+  }
+
+    function isRecentToken(tokenDate) {
+      if(twentyMinutesAgo.toISOString() < tokenDate)
+        return true;
+      return false;
+    }
+
+    function putNewToken(times) {
+      return {
+        TableName: process.env.TABLE_NAME,
+        Key: {
+          [process.env.KEY_NAME]: request.account
+        },
+        UpdateExpression: "set aToken = :a, aTokenDate=:b",
+        ExpressionAttributeValues:{
+            ":a": newToken,
+            ":b": times.toISOString()
+        }
+      };
+    }
+    
+    function respondWithToken(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
+        respondToRequest(null, {token: newToken});	
+    }
+
+    function hasCorrectPassPhrase(item) {
+      return (request.phrase && getHash(item[process.env.KEY_NAME] + request.phrase) == item.Hashed_Phrase);
+    }
+
+    function respondWithKeysAndToken(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
+        respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk)});	
+    }
+
+    function respondWithTokenAndEnc_ID(item) {
+      respondToRequest(null, {token: item.aToken, enc_id: enc_id});
+    }
+
  
 function decrypt(text){
   return crypto.createDecipher(cryptAlgorithm,password).update(text,'hex','utf8');
