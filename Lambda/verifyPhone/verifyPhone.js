@@ -1,84 +1,100 @@
 'use strict';
 /*
+  { account: PublicEthereumAddress, token: FTToken_Token } // True if there is a verified phone, false if not.
   { phone: USPhoneNumber, account: PublicEthereumAddress, token: FTToken_Token } // Add phone and SMS code to verify
   { phone: USPhoneNumber, account: PublicEthereumAddress, token: FTToken_Token, code: 6DigitCode } // verify added phone
 */
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
-  twilio = require('twilio');
+  twilio = require('twilio'),
   biguint = require('biguint-format'),
   client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
   documentClient = new AWS.DynamoDB.DocumentClient(),
-  now = new Date(),
-  twentyMinutesAgo = new Date(),
+  now,
+  twentyMinutesAgo,
   cryptAlgorithm = 'aes-256-ctr',
 	password = process.env.PASSWORD,
-  newToken = uuid(),
-  newCode = randomSixDigitCode(),
+  newToken,
+  newCode,
   request,
   respondToRequest;
 
-twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
-
 exports.handler = (event, context, callback) => {
-  if(!requestHasProperFormat(event)) {
-		callback('Not Proper Format', null);
-		return;
+  respondToRequest = callback;
+  request = event;
+  
+  now = new Date();
+  twentyMinutesAgo = new Date();
+  newToken = uuid();
+  newCode = randomSixDigitCode();
+  twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
+
+  if(request.phone) {
+    if(!requestHasProperFormat(request))
+      callback('Not Proper Format', null);
+    else
+      documentClient.get(doesPhoneExist(), verifyPhone);
   }
-
-	respondToRequest = callback;
-	request = event;
-
-  documentClient.get(doesPhoneExist(), verifyPhone);
+  else {
+    if(request.account && request.token)
+      documentClient.get(searchForKey(), seeIfAccountHasPhone);
+    else
+      callback('Not Proper Format', null);
+  }
 };
 
-function requestHasProperFormat(event) {
-  if( isValidPhone(event.phone) && isValidRequest(event))
+function requestHasProperFormat(checkEvent) {
+  if( isValidPhone(checkEvent.phone) && isValidRequest(checkEvent))
       return true;
   return false;
 }
 
   function isValidPhone(phone) {
-    if(phone && isNumber(phone) && phone > 1000000000 && phone < 9999999999)
+    if(phone && +phone > 1000000000 && +phone < 9999999999)
       return true;
     return false;
   }
 
-  function isValidRequest(event) {
-    return (event.account && event.token);
+  function isValidRequest(checkEvent) {
+    return (checkEvent.account && checkEvent.token);
   }
 
 function doesPhoneExist() {
 	return {
 		TableName: process.env.TABLE_NAME_PHONE,
 		Key: {
-			[process.env.KEY_NAME_PHONE]: encrypt(request.phone)
+      [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+      [process.env.KEY_NAME]: request.account
 		}
 	};
 }
 
 function verifyPhone(err, data) {
-  if(err)
+  if(err){
     respondToRequest('DB Error', null);
+  }
   else if(isPhoneInDB(data.Item)) {
     if(data.Item.Verified)
       respondToRequest('DB Error', null);
-    else 
-      verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(data.Item.aCode);
+    else
+      verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(data.Item);
   }
-  else
+  else {
     documentClient.get(searchForKey(), addPhoneAndSendCode);
+  }
 }
 
   function isPhoneInDB(item) {
     return (item && item[process.env.KEY_NAME]);
   }
 
-  function verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(phoneCodeInDB) {
-    if(isValidSubmittedPhoneCode(phoneCodeInDB))
+  function verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(phoneInDB) {
+    if(isValidSubmittedPhoneCode(phoneInDB.aCode))
       documentClient.get(searchForKey(), checkValidTokenThenVerifyPhone);
-    else
+    else if(!isRecentSMS(phoneInDB.CreateDate))
+      documentClient.get(searchForKey(), checkValidTokenThenResendPhoneCode);
+    else 
       respondToRequest('DB Error', null);
   }
 
@@ -90,7 +106,7 @@ function verifyPhone(err, data) {
       if(err)
         respondToRequest('DB Error', null);
       else if(isValidToken(data.Item))
-        documentClient.update(makePhoneVerified(), respondWithNewToken);
+        documentClient.update(makePhoneVerified(), addPhoneToMainDBAndRespondWithNewToken);
       else
         respondToRequest('DB Error', null);
     }
@@ -99,7 +115,8 @@ function verifyPhone(err, data) {
         return {
           TableName: process.env.TABLE_NAME_PHONE,
           Key: {
-            [process.env.KEY_NAME_PHONE]: encrypt(request.phone)
+            [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+            [process.env.KEY_NAME]: request.account
           },
           UpdateExpression: "set aCode = :a, Verified=:b, VerifiedDate=:c",
           ExpressionAttributeValues:{
@@ -110,33 +127,85 @@ function verifyPhone(err, data) {
         };
       }
 
-      function respondWithNewToken(err, data) {
+      function addPhoneToMainDBAndRespondWithNewToken(err, data) {
         if(err)
           respondToRequest('DB Error', null);
         else
-          documentClient.update(updateToken(), respondWithToken);
+          documentClient.update(addNewPhoneToMainDB(), respondWithNewToken);
       }
-      
-        function updateToken() {
+
+        function addNewPhoneToMainDB() {
           return {
             TableName: process.env.TABLE_NAME,
             Key: {
               [process.env.KEY_NAME]: request.account
             },
-            UpdateExpression: "set aToken = :a, aTokenDate=:b",
+            UpdateExpression: "set Phone=:a",
             ExpressionAttributeValues:{
-                ":a":newToken,
-                ":b":now.toISOString()
+              ":a": encrypt(request.phone)
             }
           };
         }
-      
-        function respondWithToken(err, data) {
+
+        function respondWithNewToken(err, data) {
           if(err)
             respondToRequest('DB Error', null);
           else
-            respondToRequest(null, {account:request.account, token:newToken});
+            documentClient.update(updateToken(), respondWithToken);
         }
+        
+          function updateToken() {
+            return {
+              TableName: process.env.TABLE_NAME,
+              Key: {
+                [process.env.KEY_NAME]: request.account
+              },
+              UpdateExpression: "set aToken = :a, aTokenDate=:b",
+              ExpressionAttributeValues:{
+                  ":a":newToken,
+                  ":b":now.toISOString()
+              }
+            };
+          }
+        
+          function respondWithToken(err, data) {
+            if(err)
+              respondToRequest('DB Error', null);
+            else
+              respondToRequest(null, {account:request.account, token:newToken});
+          }
+
+    function isRecentSMS(codeDate) {
+      var yesterday = new Date();
+      yesterday.setHours(now.getHours() - 24);
+      if(yesterday.toISOString() < codeDate)
+        return true;
+      return false;
+    }
+
+    function checkValidTokenThenResendPhoneCode(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else if(isValidToken(data.Item))
+        documentClient.update(makeNewPhoneCode(), sendSMSCodeAndResponse);
+      else
+        respondToRequest('DB Error', null);
+    }
+
+      function makeNewPhoneCode() {
+        return {
+          TableName: process.env.TABLE_NAME_PHONE,
+          Key: {
+            [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+            [process.env.KEY_NAME]: request.account
+          },
+          UpdateExpression: "set aCode = :a, CreateDate=:b",
+          ExpressionAttributeValues:{
+              ":a":newCode,
+              ":b":now.toISOString()
+          }
+        };
+      }
 
   function addPhoneAndSendCode(err, data) {
     if(err)
@@ -161,7 +230,7 @@ function verifyPhone(err, data) {
 
     function sendSMSCodeAndResponse(err, data) {
       if(err)
-        respondToRequest('DB Real Error', null);
+        respondToRequest('DB Error', null);
       else
         sendText(newCode);
     }
@@ -169,12 +238,25 @@ function verifyPhone(err, data) {
       function sendText(code) {
         client.messages
         .create({
-          to: '+1' + request.number,
+          to: '+1' + request.phone,
           from: process.env.TWILIO_FROM,
-          body: 'FinTechToken verification code: ' + code
+          body: 'Code: ' + code + ' for FinTechToken.com'
         })
         .then(message => {respondToRequest(null, 'Sent_Code')});
+       respondToRequest(null, 'Sent_Code');
       }
+
+function seeIfAccountHasPhone(err, data) {
+  if(err)
+    respondToRequest('DB Error', null);
+  else if(isValidToken(data.Item)) {
+    if(data.Item.Phone)
+      respondToRequest(null, true);
+    else
+      respondToRequest(null, false);
+  } else
+    respondToRequest('DB Error', null);
+}
 
 
 function searchForKey() {
@@ -201,5 +283,5 @@ function encrypt(text) {
 }
 
 function randomSixDigitCode() {
-  return (biguint.format(crypto.randomBytes(3), 'dec')+100000).toString().substring(0,6);
+  return (+biguint(crypto.randomBytes(3), 'dec')+100000).toString().substring(0,6);
 }

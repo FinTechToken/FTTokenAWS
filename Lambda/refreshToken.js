@@ -1,26 +1,24 @@
 'use strict';
 /*
-  { account: PublicEtherAddress, token: FTToken_Token } // Get New Token within time
+  { account: PublicEtherAddress, token: FTToken_Token } // Get New Token and Keys within time
   { account: PublicEtherAddress, token: FTToken_Token, expire: true } // Expire the token
-  { account: PublicEtherAddress, token: FTToken_Token, phrase: Encrypted_Phrase } // Get New Token and Keys outside of time
+  { account: PublicEtherAddress, token: FTToken_Token, phrase: Pass_Phrase } // Get New Token outside of time
 */
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
   documentClient = new AWS.DynamoDB.DocumentClient(),
-  now = new Date(),
-  twentyMinutesAgo = new Date(),
+  now,
+  twentyMinutesAgo,
 	cryptAlgorithm = 'aes-256-ctr',
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
 	key = process.env.HASH_KEY,
-  newToken = uuid(),
+  newToken,
   enc_id, 
   enc_pk,
   respondToRequest, 
   request;
-
-twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
 
 exports.refreshToken = function(event, context, callback) {
 	if(!requestHasProperFormat(event)) {
@@ -30,7 +28,10 @@ exports.refreshToken = function(event, context, callback) {
 
 	respondToRequest = callback;
 	request = event;
-
+  newToken = uuid();
+  now = new Date();
+  twentyMinutesAgo = new Date();
+  twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
 	documentClient.get(searchForKey(), refreshTokenIfAccountTokenMatch);
 };
 
