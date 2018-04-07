@@ -9,7 +9,8 @@
   "author": "FinTechToken",
   "license": "",
   "dependencies": {
-    "twilio": "3.14.0"
+    "twilio": "3.14.0",
+    "biguint-format": "1.0.0"
   },
   "devDependencies": {
   },

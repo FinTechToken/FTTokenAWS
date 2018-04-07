@@ -6,26 +6,30 @@
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
 	crypto = require('crypto'),
-  twilio = require('twilio');
+  twilio = require('twilio'),
   biguint = require('biguint-format'),
   client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
   documentClient = new AWS.DynamoDB.DocumentClient(),
-  now = new Date(),
-  twentyMinutesAgo = new Date(),
+  now,
+  twentyMinutesAgo,
   cryptAlgorithm = 'aes-256-ctr',
 	password = process.env.PASSWORD,
-  newToken = uuid(),
-  newCode = randomSixDigitCode(),
+  newToken,
+  newCode,
   request,
   respondToRequest;
-
-twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
 
 exports.handler = (event, context, callback) => {
   if(!requestHasProperFormat(event)) {
 		callback('Not Proper Format', null);
 		return;
   }
+
+  now = new Date();
+  twentyMinutesAgo = new Date();
+  twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
+  newToken = uuid();
+  newCode = randomSixDigitCode();
 
 	respondToRequest = callback;
 	request = event;
@@ -190,7 +194,7 @@ function sendSMSCodeAndResponse(err, data) {
 
 
 function randomSixDigitCode() {
-  return (biguint.format(crypto.randomBytes(3), 'dec')+100000).toString().substring(0,6);
+  return (biguint(crypto.randomBytes(3), 'dec')+100000).toString().substring(0,6);
 }
 
 function encrypt(text) {

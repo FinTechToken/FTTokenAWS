@@ -10,8 +10,8 @@ var AWS = require('aws-sdk'),
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
 	key = process.env.HASH_KEY,
-	newToken = uuid(),
-	now = new Date(),
+	newToken,
+	now,
 	respondToRequest, 
 	request;
 
@@ -20,7 +20,8 @@ exports.newAccount = function(event, context, callback) {
 		callback('Not Proper Format', null);
 		return;
 	}
-
+	newToken = uuid();
+	now = new Date();
 	respondToRequest = callback;
 	request = event;
 
