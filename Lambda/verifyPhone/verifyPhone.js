@@ -34,7 +34,7 @@ exports.handler = (event, context, callback) => {
     if(!requestHasProperFormat(request))
       callback('Not Proper Format', null);
     else
-      documentClient.get(doesPhoneExist(), verifyPhone);
+      documentClient.query(doesPhoneExist(), verifyPhone);
   }
   else {
     if(request.account && request.token)
@@ -62,31 +62,35 @@ function requestHasProperFormat(checkEvent) {
 
 function doesPhoneExist() {
 	return {
-		TableName: process.env.TABLE_NAME_PHONE,
-		Key: {
-      [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
-      [process.env.KEY_NAME]: request.account
-		}
+    TableName: process.env.TABLE_NAME_PHONE,
+    KeyConditionExpression: process.env.KEY_NAME_PHONE +' = :a',
+    ExpressionAttributeValues: {
+      ':a': encrypt(request.phone)
+    }
 	};
 }
 
 function verifyPhone(err, data) {
   if(err){
-    respondToRequest('DB Error', null);
+    respondToRequest('DB Error' , null);
   }
-  else if(isPhoneInDB(data.Item)) {
-    if(data.Item.Verified)
-      respondToRequest('DB Error', null);
-    else
-      verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(data.Item);
-  }
-  else {
+  else if(data.Count) {
+    let Item = data.Items[0];
+    if(isPhoneAccount(Item)) {
+      if(Item.Verified)
+        respondToRequest('DB Error', null);
+      else
+        verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(Item);
+    } else {
+      respondToRequest(null, 'AccountExists')
+    }
+  } else {
     documentClient.get(searchForKey(), addPhoneAndSendCode);
   }
 }
 
-  function isPhoneInDB(item) {
-    return (item && item[process.env.KEY_NAME]);
+  function isPhoneAccount(item) {
+    return (item && item[process.env.KEY_NAME] == request.account);
   }
 
   function verifySubmittedPhoneCodeAndCheckValidTokenThenVerifyPhone(phoneInDB) {
@@ -95,7 +99,7 @@ function verifyPhone(err, data) {
     else if(!isRecentSMS(phoneInDB.CreateDate))
       documentClient.get(searchForKey(), checkValidTokenThenResendPhoneCode);
     else 
-      respondToRequest('DB Error', null);
+      respondToRequest(null, 'Sent_Code');
   }
 
     function isValidSubmittedPhoneCode(phoneCodeInDB) {
