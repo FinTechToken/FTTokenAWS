@@ -34,7 +34,7 @@ exports.handler = (event, context, callback) => {
 	respondToRequest = callback;
 	request = event;
 
-  documentClient.get(doesPhoneExist(), getTokenUsingSMSCode);
+  documentClient.query(doesPhoneExist(), getTokenUsingSMSCode);
 };
 
 function requestHasProperFormat(event) {
@@ -44,51 +44,55 @@ function requestHasProperFormat(event) {
 }
 
   function isValidPhone(phone) {
-    if(phone && isNumber(phone) && phone > 1000000000 && phone < 9999999999)
+    if(phone && +phone > 1000000000 && +phone < 9999999999)
       return true;
     return false;
   }
 
 function doesPhoneExist() {
-	return {
-		TableName: process.env.TABLE_NAME_PHONE,
-		Key: {
-			[process.env.KEY_NAME_PHONE]: encrypt(request.phone)
-		}
+  return {
+    TableName: process.env.TABLE_NAME_PHONE,
+    KeyConditionExpression: process.env.KEY_NAME_PHONE +' = :a',
+    ExpressionAttributeValues: {
+      ':a': encrypt(request.phone)
+    }
 	};
 }
 
 function getTokenUsingSMSCode(err, data) {
 	if(err)
 		respondToRequest('DB Error', null);
-	else if(isPhoneInDB(data.Item) && data.Item.Verified) {
-    if(data.Item.Code) {
-      if(request.Code) {
-        if(isValidSubmittedPhoneCode(data.Item.Code) && data.Item.CodeRetry < 6 && isTokenRecent(data.Item.CodeDate)) {
-          request.account = data.Item[process.env.KEY_NAME];
-          documentClient.update(erasePhoneCode(), respondWithNewToken);
+  else if(data.Count) {
+    let Item = data.Items[0];
+    request.account = Item[process.env.KEY_NAME];
+    if(Item.Verified || true) {
+      if(Item.Code) {
+        if(request.code) {
+          if(isValidSubmittedPhoneCode(Item.Code) && Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate)) {
+            documentClient.update(erasePhoneCode(), respondWithNewToken);
+          } else {
+            if(Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate))
+              documentClient.update(increasePhoneCodeRetry(Item.CodeRetry+1), errorResponse);
+            else
+              respondToRequest('DB Error', null);
+          }
         } else {
-          if(data.Item.CodeRetry < 6 && isTokenRecent(data.Item.CodeDate))
-            documentClient.update(increasePhoneCodeRetry(data.Item.CodeRetry+1), errorResponse);
-          else
-            respondToRequest('DB Error', null);
+          if(isTokenRecent(Item.CodeDate))
+            respondToRequest(null, 'Sent_Code');
+          else{
+            documentClient.update(putNewCode(), sendSMSCodeAndResponse);
+          }
         }
       } else {
-        if(isTokenRecent(data.Item.CodeDate))
-          respondToRequest('DB Error', null);
-        else
-          documentClient.update(putNewCode(), sendSMSCodeAndResponse);
+        documentClient.update(putNewCode(), sendSMSCodeAndResponse);
       }
-    } else
-      documentClient.update(putNewCode(), sendSMSCodeAndResponse);
+    } else {
+      // Not verified - send code
+    }
   }
   else
     respondToRequest('DB Error', null);
 }
-
-  function isPhoneInDB(item) {
-    return (item && item[process.env.KEY_NAME]);
-  }
 
   function isValidSubmittedPhoneCode(phoneCodeInDB) {
     return (phoneCodeInDB == request.code);
@@ -104,7 +108,8 @@ function getTokenUsingSMSCode(err, data) {
     return {
       TableName: process.env.TABLE_NAME_PHONE,
       Key: {
-        [process.env.KEY_NAME_PHONE]: encrypt(request.phone)
+        [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+        [process.env.KEY_NAME]: request.account
       },
       UpdateExpression: "set Code = :a, CodeDate=:b, CodeRetry=:c",
       ExpressionAttributeValues: {
@@ -147,7 +152,8 @@ function getTokenUsingSMSCode(err, data) {
       return {
         TableName: process.env.TABLE_NAME_PHONE,
         Key: {
-          [process.env.KEY_NAME_PHONE]: encrypt(request.phone)
+          [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+          [process.env.KEY_NAME]: request.account
         },
         UpdateExpression: "set CodeRetry=:a",
         ExpressionAttributeValues: {
@@ -164,13 +170,14 @@ function getTokenUsingSMSCode(err, data) {
     return {
       TableName: process.env.TABLE_NAME_PHONE,
       Key: {
-        [process.env.KEY_NAME_PHONE]: encrypt(request.phone)
+        [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+        [process.env.KEY_NAME]: request.account
       },
       UpdateExpression: "set Code=:a, CodeDate=:b, CodeRetry=:c",
       ExpressionAttributeValues: {
         ":a":newCode,
         ":b":now.toISOString(),
-        ":c":0
+        ":c": 0
       }
     };
   }
@@ -185,9 +192,9 @@ function sendSMSCodeAndResponse(err, data) {
   function sendText(code) {
     client.messages
     .create({
-      to: '+1' + request.number,
+      to: '+1' + request.phone,
       from: process.env.TWILIO_FROM,
-      body: 'FinTechToken verification code: ' + code
+      body: 'Code: ' + code + ' for FinTechToken.com'
     })
     .then(message => {respondToRequest(null, 'Sent_Code')});
   }
