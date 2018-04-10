@@ -65,29 +65,26 @@ function getTokenUsingSMSCode(err, data) {
   else if(data.Count) {
     let Item = data.Items[0];
     request.account = Item[process.env.KEY_NAME];
-    if(Item.Verified || true) {
-      if(Item.Code) {
-        if(request.code) {
-          if(isValidSubmittedPhoneCode(Item.Code) && Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate)) {
-            documentClient.update(erasePhoneCode(), respondWithNewToken);
-          } else {
-            if(Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate))
-              documentClient.update(increasePhoneCodeRetry(Item.CodeRetry+1), errorResponse);
-            else
-              respondToRequest('DB Error', null);
-          }
+    if(Item.Code) {
+      if(request.code) {
+        if(isValidSubmittedPhoneCode(Item.Code) && Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate)) {
+          request.Verified = Item.Verified;
+          documentClient.update(erasePhoneCode(), respondWithNewToken);
         } else {
-          if(isTokenRecent(Item.CodeDate))
-            respondToRequest(null, 'Sent_Code');
-          else{
-            documentClient.update(putNewCode(), sendSMSCodeAndResponse);
-          }
+          if(Item.CodeRetry < 6 && isTokenRecent(Item.CodeDate))
+            documentClient.update(increasePhoneCodeRetry(Item.CodeRetry+1), errorResponse);
+          else
+            respondToRequest('DB Error', null);
         }
       } else {
-        documentClient.update(putNewCode(), sendSMSCodeAndResponse);
+        if(isTokenRecent(Item.CodeDate))
+          respondToRequest(null, 'Sent_Code');
+        else{
+          documentClient.update(putNewCode(), sendSMSCodeAndResponse);
+        }
       }
     } else {
-      // Not verified - send code
+      documentClient.update(putNewCode(), sendSMSCodeAndResponse);
     }
   }
   else
@@ -105,19 +102,28 @@ function getTokenUsingSMSCode(err, data) {
   }
 
   function erasePhoneCode() {
-    return {
-      TableName: process.env.TABLE_NAME_PHONE,
-      Key: {
-        [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
-        [process.env.KEY_NAME]: request.account
-      },
-      UpdateExpression: "set Code = :a, CodeDate=:b, CodeRetry=:c",
-      ExpressionAttributeValues: {
-        ":a":null,
-        ":b":null,
-        ":c":null
-      }
-    };
+    if(request.Verified)
+      return {
+        TableName: process.env.TABLE_NAME_PHONE,
+        Key: {
+          [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+          [process.env.KEY_NAME]: request.account
+        },
+        UpdateExpression: "REMOVE Code, CodeDate, CodeRetry"
+      };
+    else
+      return {
+        TableName: process.env.TABLE_NAME_PHONE,
+        Key: {
+          [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
+          [process.env.KEY_NAME]: request.account
+        },
+        UpdateExpression: "REMOVE Code, aCode, CodeDate, CodeRetry SET Verified=:b, VerifiedDate=:c",
+        ExpressionAttributeValues: {
+          ":b":true,
+          ":c":now.toISOString()
+        }
+      };
   }
 
   function respondWithNewToken(err, data) {
@@ -126,19 +132,34 @@ function getTokenUsingSMSCode(err, data) {
     else
       documentClient.update(updateToken(), respondWithToken);
   }
-  
+
     function updateToken() {
-      return {
-        TableName: process.env.TABLE_NAME,
-        Key: {
-          [process.env.KEY_NAME]: request.account
-        },
-        UpdateExpression: "set aToken = :a, aTokenDate=:b",
-        ExpressionAttributeValues:{
-            ":a":newToken,
-            ":b":now.toISOString()
-        }
-      };
+      if(request.Verified)
+        return {
+          TableName: process.env.TABLE_NAME,
+          Key: {
+            [process.env.KEY_NAME]: request.account
+          },
+          UpdateExpression: "set aToken = :a, aTokenDate=:b",
+          ExpressionAttributeValues:{
+              ":a":newToken,
+              ":b":now.toISOString()
+          }
+        };
+      else {
+        return {
+          TableName: process.env.TABLE_NAME,
+          Key: {
+            [process.env.KEY_NAME]: request.account
+          },
+          UpdateExpression: "set aToken = :a, aTokenDate=:b, Phone=:c",
+          ExpressionAttributeValues:{
+              ":a":newToken,
+              ":b":now.toISOString(),
+              ":c": encrypt(request.phone)
+          }
+        };
+      }
     }
   
     function respondWithToken(err, data) {
