@@ -122,9 +122,8 @@ function verifyPhone(err, data) {
             [process.env.KEY_NAME_PHONE]: encrypt(request.phone),
             [process.env.KEY_NAME]: request.account
           },
-          UpdateExpression: "set aCode = :a, Verified=:b, VerifiedDate=:c",
+          UpdateExpression: "REMOVE aCode SET Verified=:b, VerifiedDate=:c",
           ExpressionAttributeValues:{
-              ":a":null,
               ":b":true,
               ":c":now.toISOString()
           }
