@@ -17,6 +17,7 @@ var AWS = require('aws-sdk'),
   newToken,
   enc_id, 
   enc_pk,
+  theTokenDate,
   respondToRequest, 
   request;
 
@@ -32,7 +33,7 @@ exports.refreshToken = function(event, context, callback) {
   now = new Date();
   twentyMinutesAgo = new Date();
   twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
-	documentClient.get(searchForKey(), refreshTokenIfAccountTokenMatch);
+	documentClient.get(searchForToken(), refreshTokenIfAccountTokenMatch);
 };
 
 function requestHasProperFormat(event) {
@@ -41,40 +42,61 @@ function requestHasProperFormat(event) {
 	return true;
 }
 
-function searchForKey() {
+function searchForToken() {
 	return {
-		TableName: process.env.TABLE_NAME,
+		TableName: process.env.TABLE_NAME_TOKEN,
 		Key: {
-			[process.env.KEY_NAME]: request.account
+			[process.env.KEY_NAME_TOKEN]: request.token
 		}
 	};
 }
 
 function refreshTokenIfAccountTokenMatch(err, data) {
 	if(err)
-		respondToRequest('DB Error', null);
+		respondToRequest('DB Error1', null);
 	else if(isAccountTokenMatch(data.Item))
-    refreshToken(data.Item);
+    getAccountAndRefreshToken(data.Item);
   else
-    respondToRequest('DB Error', null);
+    respondToRequest('DB Error2', null);
 }
 
-  function isAccountTokenMatch(item) {
-    return(item && item.aToken == request.token && item.aTokenDate);
+  function getAccountAndRefreshToken(tokens) {
+    theTokenDate = tokens.aTokenDate;
+    documentClient.get(searchForAccount(tokens[process.env.KEY_NAME]), refreshToken);
   }
 
-  function refreshToken(item) {
-    enc_id = item.Encrypted_ID;
-    enc_pk = item.Encrypted_PrivateKey;
-    if(isRecentToken(item.aTokenDate)) {
-      if(request.expire)
-        documentClient.update(putNewToken(twentyMinutesAgo), respondWithToken);
-      else
-        documentClient.update(putNewToken(now), respondWithKeysAndToken);
-    } else if(hasCorrectPassPhrase(item))
-      documentClient.update(putNewToken(now), respondWithToken);
-    else
-      respondWithTokenAndEnc_ID(item);
+    function searchForAccount(myKey) {
+      return {
+        TableName: process.env.TABLE_NAME,
+        Key: {
+          [process.env.KEY_NAME]: myKey
+        }
+      };
+    }
+
+  function isAccountTokenMatch(item) {
+    return(item && item[process.env.KEY_NAME] == request.account && item.aTokenDate);
+  }
+
+  function refreshToken(err, data) {
+    if(err)
+      respondToRequest('DB Error3', null);
+    else if(data.Item) {
+      enc_id = data.Item.Encrypted_ID;
+      enc_pk = data.Item.Encrypted_PrivateKey;
+      if(isRecentToken(theTokenDate)) {
+        if(request.expire)
+          documentClient.put(putNewToken(twentyMinutesAgo), deleteOldTokenAndRespondWithToken);
+        else
+          documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithKeysAndToken);
+      } else {
+        if(hasCorrectPassPhrase(data.Item.Hashed_Phrase))
+          documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithToken);
+        else
+          respondWithTokenAndEnc_ID();
+      }
+    } else 
+      respondToRequest('DB Error4', null);
   }
 
     function isRecentToken(tokenDate) {
@@ -83,40 +105,60 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       return false;
     }
 
-    function putNewToken(times) {
+    function putNewToken(time) {
       return {
-        TableName: process.env.TABLE_NAME,
-        Key: {
-          [process.env.KEY_NAME]: request.account
-        },
-        UpdateExpression: "set aToken = :a, aTokenDate=:b",
-        ExpressionAttributeValues:{
-            ":a": newToken,
-            ":b": times.toISOString()
+        TableName: process.env.TABLE_NAME_TOKEN,
+        Item: {
+          [process.env.KEY_NAME_TOKEN]: newToken,
+          [process.env.KEY_NAME]: request.account,
+          aTokenDate: time.toISOString()
         }
       };
     }
-    
+
+    function deleteOldTokenAndRespondWithKeysAndToken(err, data) {
+      if(err)
+        respondToRequest('DB Error5', null);
+      else
+        documentClient.delete(deleteOldToken(), respondWithKeysAndToken);
+    }
+
+    function deleteOldTokenAndRespondWithToken(err, data) {
+      if(err)
+        respondToRequest('DB Error6', null);
+      else
+        documentClient.delete(deleteOldToken(), respondWithToken);
+    }
+
+      function deleteOldToken() {
+        return {
+          TableName: process.env.TABLE_NAME_TOKEN,
+          Key: {
+            [process.env.KEY_NAME_TOKEN]: request.token
+          }
+        };
+      }
+
     function respondWithToken(err, data) {
       if(err)
-        respondToRequest('DB Error', null);
+        respondToRequest('DB Error7', null);
       else
         respondToRequest(null, {token: newToken});	
     }
 
-    function hasCorrectPassPhrase(item) {
-      return (request.phrase && getHash(item[process.env.KEY_NAME] + request.phrase) == item.Hashed_Phrase);
+    function hasCorrectPassPhrase(hashed_phrase) {
+      return (request.phrase && getHash(request.account + request.phrase) == hashed_phrase);
     }
 
     function respondWithKeysAndToken(err, data) {
       if(err)
-        respondToRequest('DB Error', null);
+        respondToRequest('DB Error8' + JSON.stringify(err, null, 2), null);
       else
         respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk)});	
     }
 
-    function respondWithTokenAndEnc_ID(item) {
-      respondToRequest(null, {token: item.aToken, enc_id: enc_id});
+    function respondWithTokenAndEnc_ID() {
+      respondToRequest(null, {token: request.token, enc_id: enc_id});
     }
 
  

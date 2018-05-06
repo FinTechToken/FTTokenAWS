@@ -32,7 +32,8 @@ exports.handler = (event, context, callback) => {
   newCode = randomSixDigitCode();
 
 	respondToRequest = callback;
-	request = event;
+  request = event;
+  request.Verified=null;
 
   documentClient.query(doesPhoneExist(), getTokenUsingSMSCode);
 };
@@ -129,37 +130,36 @@ function getTokenUsingSMSCode(err, data) {
   function respondWithNewToken(err, data) {
     if(err)
       respondToRequest('DB Error', null);
-    else
-      documentClient.update(updateToken(), respondWithToken);
+    else {
+      if(request.Verified)
+        documentClient.put(putToken(), respondWithToken);
+      else
+        documentClient.update(updatePhone(), putTokenAndRespondWithToken);
+    }
   }
 
-    function updateToken() {
-      if(request.Verified)
-        return {
-          TableName: process.env.TABLE_NAME,
-          Key: {
-            [process.env.KEY_NAME]: request.account
-          },
-          UpdateExpression: "set aToken = :a, aTokenDate=:b",
-          ExpressionAttributeValues:{
-              ":a":newToken,
-              ":b":now.toISOString()
-          }
-        };
-      else {
-        return {
-          TableName: process.env.TABLE_NAME,
-          Key: {
-            [process.env.KEY_NAME]: request.account
-          },
-          UpdateExpression: "set aToken = :a, aTokenDate=:b, Phone=:c",
-          ExpressionAttributeValues:{
-              ":a":newToken,
-              ":b":now.toISOString(),
-              ":c": encrypt(request.phone)
-          }
-        };
-      }
+    function putToken() {
+      return {
+        TableName: process.env.TABLE_NAME_TOKEN,
+        Item: {
+          [process.env.KEY_NAME_TOKEN]: newToken,
+          [process.env.KEY_NAME]: request.account,
+          aTokenDate: now.toISOString()
+        }
+      };
+    }
+
+    function updatePhone() {
+      return {
+        TableName: process.env.TABLE_NAME,
+        Key: {
+          [process.env.KEY_NAME]: request.account
+        },
+        UpdateExpression: "set Phone=:c",
+        ExpressionAttributeValues:{
+            ":c": encrypt(request.phone)
+        }
+      };
     }
   
     function respondWithToken(err, data) {
@@ -167,6 +167,13 @@ function getTokenUsingSMSCode(err, data) {
         respondToRequest('DB Error', null);
       else
         respondToRequest(null, {account:request.account, token:newToken});
+    }
+
+    function putTokenAndRespondWithToken(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
+        documentClient.put(putToken(), respondWithToken);
     }
 
     function increasePhoneCodeRetry(retry) {

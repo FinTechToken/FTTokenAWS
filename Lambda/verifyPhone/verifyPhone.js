@@ -14,7 +14,7 @@ var AWS = require('aws-sdk'),
   now,
   twentyMinutesAgo,
   cryptAlgorithm = 'aes-256-ctr',
-	password = process.env.PASSWORD,
+  password = process.env.PASSWORD,
   newToken,
   newCode,
   request,
@@ -30,24 +30,26 @@ exports.handler = (event, context, callback) => {
   newCode = randomSixDigitCode();
   twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
 
-  if(request.phone) {
-    if(!requestHasProperFormat(request))
-      callback('Not Proper Format', null);
-    else
-      documentClient.query(doesPhoneExist(), verifyPhone);
-  }
-  else {
-    if(request.account && request.token)
-      documentClient.get(searchForKey(), seeIfAccountHasPhone);
-    else
-      callback('Not Proper Format', null);
-  }
+  if(isValidRequest(request))
+    documentClient.get(searchForToken(), startVerifyPhone);
+  else
+    callback('Not Proper Format', null);
 };
 
-function requestHasProperFormat(checkEvent) {
-  if( isValidPhone(checkEvent.phone) && isValidRequest(checkEvent))
-      return true;
-  return false;
+function startVerifyPhone(err, data) {
+  if(err) 
+    respondToRequest('DB Error', null);
+  else if(isValidToken(data.Item)) {
+    if(request.phone) {
+      if(isValidPhone(checkEvent.phone))
+        documentClient.query(doesPhoneExist(), verifyPhone);
+      else
+        callback('Not Proper Format', null);
+    }
+    else
+      documentClient.get(searchForKey(), seeIfAccountHasPhone);
+  } else 
+    respondToRequest('DB Error', null);
 }
 
   function isValidPhone(phone) {
@@ -109,10 +111,8 @@ function verifyPhone(err, data) {
     function checkValidTokenThenVerifyPhone(err, data) {
       if(err)
         respondToRequest('DB Error', null);
-      else if(isValidToken(data.Item))
-        documentClient.update(makePhoneVerified(), addPhoneToMainDBAndRespondWithNewToken);
       else
-        respondToRequest('DB Error', null);
+        documentClient.update(makePhoneVerified(), addPhoneToMainDBAndRespondWithNewToken);
     }
 
       function makePhoneVerified() {
@@ -154,19 +154,32 @@ function verifyPhone(err, data) {
           if(err)
             respondToRequest('DB Error', null);
           else
-            documentClient.update(updateToken(), respondWithToken);
+            documentClient.put(putToken(), deleteOldTokenAndRespondWithToken);
         }
         
-          function updateToken() {
+          function putToken() {
             return {
-              TableName: process.env.TABLE_NAME,
+              TableName: process.env.TABLE_NAME_TOKEN,
+              Item: {
+                [process.env.KEY_NAME_TOKEN]: newToken,
+                [process.env.KEY_NAME]: request.account,
+                aTokenDate: now.toISOString()
+              }
+            };
+          }
+
+          function deleteOldTokenAndRespondWithToken(err, data) {
+            if(err)
+              respondToRequest('DB Error', null);
+            else
+              documentClient.delete(deleteOldToken(), respondWithToken);
+          }
+
+          function deleteOldToken() {
+            return {
+              TableName: process.env.TABLE_NAME_TOKEN,
               Key: {
-                [process.env.KEY_NAME]: request.account
-              },
-              UpdateExpression: "set aToken = :a, aTokenDate=:b",
-              ExpressionAttributeValues:{
-                  ":a":newToken,
-                  ":b":now.toISOString()
+                [process.env.KEY_NAME_TOKEN]: request.token
               }
             };
           }
@@ -189,10 +202,8 @@ function verifyPhone(err, data) {
     function checkValidTokenThenResendPhoneCode(err, data) {
       if(err)
         respondToRequest('DB Error', null);
-      else if(isValidToken(data.Item))
-        documentClient.update(makeNewPhoneCode(), sendSMSCodeAndResponse);
       else
-        respondToRequest('DB Error', null);
+        documentClient.update(makeNewPhoneCode(), sendSMSCodeAndResponse);
     }
 
       function makeNewPhoneCode() {
@@ -213,10 +224,8 @@ function verifyPhone(err, data) {
   function addPhoneAndSendCode(err, data) {
     if(err)
       respondToRequest('DB Error', null);
-    else if(isValidToken(data.Item))
+    else 
       documentClient.put(addNewPhone(), sendSMSCodeAndResponse);
-    else
-      respondToRequest('DB Error', null);
   }
 
     function addNewPhone() {
@@ -252,13 +261,12 @@ function verifyPhone(err, data) {
 function seeIfAccountHasPhone(err, data) {
   if(err)
     respondToRequest('DB Error', null);
-  else if(isValidToken(data.Item)) {
+  else {
     if(data.Item.Phone)
       respondToRequest(null, true);
     else
       respondToRequest(null, false);
-  } else
-    respondToRequest('DB Error', null);
+  } 
 }
 
 
@@ -271,8 +279,17 @@ function searchForKey() {
   };
 }
 
+function searchForToken() {
+  return {
+    TableName: process.env.TABLE_NAME_TOKEN,
+    Key: {
+      [process.env.KEY_NAME_TOKEN]: request.token
+    }
+  };
+}
+
 function isValidToken(item) {
-  return (item && item.aToken == request.token && isTokenRecent(item.aTokenDate));
+  return (item && item[process.env.KEY_NAME] == request.account && isTokenRecent(item.aTokenDate));
 }
 
   function isTokenRecent(tokenDate) {

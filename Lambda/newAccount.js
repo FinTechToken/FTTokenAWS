@@ -49,7 +49,7 @@ function createAccountIfNotFound(err, data) {
 	else if(data.Item)
 		respondToRequest('DB Error', null);
 	else
-		documentClient.put(createNewAccount(), respondWithNewTokenOnSuccess);
+		documentClient.put(createNewAccount(), writeTokenAndRespondWithNewTokenOnSuccess);
 }
 
 	function createNewAccount() {
@@ -61,9 +61,25 @@ function createAccountIfNotFound(err, data) {
 				Encrypted_Phrase: encrypt(request.account + request.phrase),
 				Hashed_Phrase: getHash(request.account + request.phrase),
 				Encrypted_ID: request.enc_id,
-				aToken : newToken,
-				aTokenDate : now.toISOString(),
 				CreateDate : now.toISOString()
+			}
+		};
+	}
+
+	function writeTokenAndRespondWithNewTokenOnSuccess(err, data) {
+		if(err)
+			respondToRequest('DB Error', null);
+		else
+			documentClient.put(createNewToken(), respondWithNewTokenOnSuccess);
+	}
+
+	function createNewToken() {
+		return {
+			TableName: process.env.TABLE_NAME_TOKEN,
+			Item: {
+				[process.env.KEY_NAME_TOKEN]: newToken,
+				[process.env.KEY_NAME]: request.account,
+				aTokenDate: now.toISOString()
 			}
 		};
 	}
