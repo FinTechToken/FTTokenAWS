@@ -10,6 +10,7 @@ var AWS = require('aws-sdk'),
   documentClient = new AWS.DynamoDB.DocumentClient(),
   now,
   twentyMinutesAgo,
+  thirtyDaysAgo,
 	cryptAlgorithm = 'aes-256-ctr',
 	hashAlgorithm = 'sha256',
 	password = process.env.PASSWORD,
@@ -33,6 +34,8 @@ exports.refreshToken = function(event, context, callback) {
   now = new Date();
   twentyMinutesAgo = new Date();
   twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
+  thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setMinutes(now.getMinutes() - (30*24*60));
 	documentClient.get(searchForToken(), refreshTokenIfAccountTokenMatch);
 };
 
@@ -53,11 +56,11 @@ function searchForToken() {
 
 function refreshTokenIfAccountTokenMatch(err, data) {
 	if(err)
-		respondToRequest('DB Error1', null);
+		respondToRequest('DB Error', null);
 	else if(isAccountTokenMatch(data.Item))
     getAccountAndRefreshToken(data.Item);
   else
-    respondToRequest('DB Error2', null);
+    respondToRequest('DB Error', null);
 }
 
   function getAccountAndRefreshToken(tokens) {
@@ -80,7 +83,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
 
   function refreshToken(err, data) {
     if(err)
-      respondToRequest('DB Error3', null);
+      respondToRequest('DB Error', null);
     else if(data.Item) {
       enc_id = data.Item.Encrypted_ID;
       enc_pk = data.Item.Encrypted_PrivateKey;
@@ -92,15 +95,23 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       } else {
         if(hasCorrectPassPhrase(data.Item.Hashed_Phrase))
           documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithToken);
-        else
+        else if(isTokenWithinThirtyDays(theTokenDate))
           respondWithTokenAndEnc_ID();
+        else
+          respondToRequest('DB Error', null);
       }
     } else 
-      respondToRequest('DB Error4', null);
+      respondToRequest('DB Error', null);
   }
 
     function isRecentToken(tokenDate) {
       if(twentyMinutesAgo.toISOString() < tokenDate)
+        return true;
+      return false;
+    }
+
+    function isTokenWithinThirtyDays(tokenDate) {
+      if(thirtyDaysAgo.toISOString() < tokenDate)
         return true;
       return false;
     }
@@ -118,14 +129,14 @@ function refreshTokenIfAccountTokenMatch(err, data) {
 
     function deleteOldTokenAndRespondWithKeysAndToken(err, data) {
       if(err)
-        respondToRequest('DB Error5', null);
+        respondToRequest('DB Error', null);
       else
         documentClient.delete(deleteOldToken(), respondWithKeysAndToken);
     }
 
     function deleteOldTokenAndRespondWithToken(err, data) {
       if(err)
-        respondToRequest('DB Error6', null);
+        respondToRequest('DB Error', null);
       else
         documentClient.delete(deleteOldToken(), respondWithToken);
     }
@@ -141,7 +152,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
 
     function respondWithToken(err, data) {
       if(err)
-        respondToRequest('DB Error7', null);
+        respondToRequest('DB Error', null);
       else
         respondToRequest(null, {token: newToken});	
     }
@@ -152,7 +163,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
 
     function respondWithKeysAndToken(err, data) {
       if(err)
-        respondToRequest('DB Error8' + JSON.stringify(err, null, 2), null);
+        respondToRequest('DB Error' + JSON.stringify(err, null, 2), null);
       else
         respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk)});	
     }
