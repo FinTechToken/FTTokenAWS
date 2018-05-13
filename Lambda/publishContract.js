@@ -2,6 +2,7 @@
 /*
   { account: PublicEtherAddress, token: FTToken_Token, contractName, contractABI, publishedAddress } // Publish contract
   ToDo: send in solidity code and compile/publish server side.
+  ToDo: Make all addresses lowercase.
 */
 var AWS = require('aws-sdk'),
   documentClient = new AWS.DynamoDB.DocumentClient(),
@@ -9,12 +10,13 @@ var AWS = require('aws-sdk'),
   twentyMinutesAgo,
   respondToRequest, 
   request,
-  index = 0;
+  index;
 
 exports.publishContract = function(event, context, callback) {
 	if(requestHasProperFormat(event)) {
     respondToRequest = callback;
     request = event;
+    index=0;
     now = new Date();
     twentyMinutesAgo = new Date();
     twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
