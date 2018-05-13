@@ -8,7 +8,8 @@ var AWS = require('aws-sdk'),
   now,
   twentyMinutesAgo,
   respondToRequest, 
-  request;
+  request,
+  index = 0;
 
 exports.publishContract = function(event, context, callback) {
 	if(requestHasProperFormat(event)) {
@@ -83,45 +84,71 @@ function publishContractIfAccountTokenMatch(err, data) {
         if(err)
           respondToRequest('DB Error', null);
         else {
-         let index = 0;
          if(data.Count) {
           index = getMax(data);
          }
-          documentClient.put(putContract(index), null);
-          documentClient.put(putContractAuthor(index), null);
-          respondToRequest(null, true);
-          //ToDo: make synch
+         if(isDuplicate(data))
+          respondToRequest('Duplicate');
+         else
+          documentClient.put(putContract(), writeAuther);
         }
       }
 
-        function getMax(data) {
-          let max = 0;
-          for(let i=0; i++; i<data.Count) {
-            if(data.Items[i].ContractNameVer.split(':')[1] > max)
-              max = data.Items[i].ContractNameVer.split(':')[1];
-          }
-          return max+1;
+        function writeAuther(err, data) {
+          if(err)
+            respondToRequest('DB Error', null);
+          else 
+            documentClient.put(putContractAuthor(), response);
         }
 
-        function putContract(index) {
+        function response(err, data) {
+          if(err)
+            respondToRequest('DB Error', null);
+          else
+            respondToRequest(null, true);
+        }
+      
+        function isDuplicate(data) {
+          let j=0;
+          while(j<data.Count){
+            if(data.Items[j].PublishedAddress==request.publishedAddress)
+              return true;
+            j++;
+          }
+          return false;
+        }
+
+        function getMax(data) {
+          let max = 0;
+          let i = 0;
+          while(i<data.Count) {
+            if(data.Items[i].ContractNameVer.split(':')[1] > max){
+              max = data.Items[i].ContractNameVer.split(':')[1];
+            }
+            i++;
+          }
+          return +max+1;
+        }
+
+        function putContract() {
           return {
             TableName: 'Contracts',
             Item: {
               PublicAddress: request.publishedAddress,
               ContractNameVer: request.contractName + ':' + index,
-              ContractABI: request.contractABI,
+              ContractABI: JSON.stringify(request.contractABI),
               AuthorAddress: request.account
             }
           };
         }
 
-        function putContractAuthor(index) {
+        function putContractAuthor() {
           return {
             TableName: 'Contracts',
             Item: {
               PublicAddress: request.account,
               ContractNameVer: request.contractName + ':' + index,
-              ContractABI: request.contractABI,
+              ContractABI: JSON.stringify(request.contractABI),
               PublishedAddress: request.publishedAddress
             }
           };
