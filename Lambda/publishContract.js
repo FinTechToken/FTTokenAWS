@@ -1,6 +1,9 @@
 'use strict';
 /*
   { account: PublicEtherAddress, token: FTToken_Token, contractName, contractABI, publishedAddress } // Publish contract
+
+  { token: FTToken_Token, address: (tokenAddress OR AuthorAddress) } //get array - publishedAddress/authorAddress, contractName, contractVer, contractABI 
+
   ToDo: send in solidity code and compile/publish server side.
   ToDo: Make all addresses lowercase.
 */
@@ -13,23 +16,31 @@ var AWS = require('aws-sdk'),
   index;
 
 exports.publishContract = function(event, context, callback) {
-	if(requestHasProperFormat(event)) {
-    respondToRequest = callback;
-    request = event;
-    index=0;
-    now = new Date();
-    twentyMinutesAgo = new Date();
-    twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
+  respondToRequest = callback;
+  request = event;
+  index=0;
+  now = new Date();
+  twentyMinutesAgo = new Date();
+  twentyMinutesAgo.setMinutes(now.getMinutes() - 20);
+	if(putRequestHasProperFormat(event)) {
     documentClient.get(searchForToken(), publishContractIfAccountTokenMatch);		
-	} else {
+	} else if(getRequestHasProperFormat(event)) {
+    documentClient.get(searchForToken(), getContractsIfValidToken);
+  } else {
     callback('Not Proper Format', null);
   }
 };
 
-function requestHasProperFormat(event) {
+function putRequestHasProperFormat(event) {
 	if(!event.account || !event.token || !event.contractName || !event.contractABI || !event.publishedAddress || event.contractName.includes(':'))
 		return false;
 	return true;
+}
+
+function getRequestHasProperFormat(event) {
+	if(event.token && event.address)
+		return true;
+	return false;
 }
 
 function searchForToken() {
@@ -41,6 +52,37 @@ function searchForToken() {
 	};
 }
 
+function getContractsIfValidToken(err, data) {
+  if(err)
+    respondToRequest('DB Error', null);
+  else if(isRecentToken(data.Item.aTokenDate)) {
+    getContracts();
+  } else
+    respondToRequest('DB Error', null);
+}
+
+  function getContracts() {
+    documentClient.query(getContractsToReturn(), respondWithContracts);
+  }
+
+    function getContractsToReturn() {
+      return {
+        TableName: 'Contracts',
+        KeyConditionExpression: 'PublicAddress = :a',
+        ExpressionAttributeValues: {
+          ':a': request.address
+        }
+      };
+    }
+
+    function respondWithContracts(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else {
+        respondToRequest(null, data.Items);
+      }
+    }
+ 
 function publishContractIfAccountTokenMatch(err, data) {
 	if(err)
 		respondToRequest('DB Error', null);
