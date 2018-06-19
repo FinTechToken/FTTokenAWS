@@ -41,7 +41,7 @@ function startVerifyPhone(err, data) {
     respondToRequest('DB Error', null);
   else if(isValidToken(data.Item)) {
     if(request.phone) {
-      if(isValidPhone(checkEvent.phone))
+      if(isValidPhone(request.phone))
         documentClient.query(doesPhoneExist(), verifyPhone);
       else
         callback('Not Proper Format', null);

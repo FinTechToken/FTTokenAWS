@@ -3,9 +3,11 @@
   { encrypt: StringToEncrypt }
   { decrypt: StringToDecrypt }
   { getHash: StringToHash }
+  { sha3: StringToKeccak256Hash }
   { getRandomBytes: NumberBytes }
 */
 const crypto = require('crypto'),
+    keccak256 = require('js-sha3').keccak256,
     cryptAlgorithm = 'aes-256-ctr',
     hashAlgorithm = 'sha256',
     password =  process.env.PASSWORD,
@@ -20,6 +22,8 @@ exports.handler = (event, context, callback) => {
       callback(null, getHash(event.getHash));
     else if(event.getRandomBytes)
       callback(null, getRandomBytes(event.getRandomBytes));   
+    else if(event.sha3)
+      callback(null, keccak256(event.sha3));
     else
       callback('Needs encrypt, decrypt, or getHash', null);
 };

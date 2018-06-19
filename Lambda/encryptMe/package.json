@@ -1,0 +1,18 @@
+{
+  "name": "FinTechTokenEncryptMe",
+  "version": "1.0.0",
+  "description": "Encryption Lambda",
+  "scripts": {
+    "build": "zip -r ../../../EncryptMe.zip *"
+  },
+  "keywords": [],
+  "author": "FinTechToken",
+  "license": "",
+  "dependencies": {
+    "js-sha3": "0.7.0"
+  },
+  "devDependencies": {
+  },
+  "repository": {}
+}
+
