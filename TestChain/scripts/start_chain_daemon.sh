@@ -1,1 +1,1 @@
-geth --rpc --ws --wsport 8545 --wsorigins="*" --rpccorsdomain "*" --datadir="../data/" --port 30304 --gasprice 0 --targetgaslimit 10485760 --cache 2048 --nat none --rpcport 8546 --rpcaddr "0.0.0.0" --wsaddr "0.0.0.0" --networkid 913945103463586943 console
+geth --rpc --ws --wsport 8545 --wsorigins="*" --rpccorsdomain "*" --datadir="../data/" --port 30304 --gasprice 0 --targetgaslimit 10485760 --cache 2048 --nat none --rpcport 8546 --rpcaddr "0.0.0.0" --wsaddr "0.0.0.0" --networkid 913945103463586943 js "onlyMineTrans.js" console

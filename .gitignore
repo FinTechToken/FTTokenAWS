@@ -1,4 +1,4 @@
 /TestChain/data
 node_modules/
-
+/TestChain/scripts/sendHash.js
 TestChain/npm-debug\.log

@@ -22,4 +22,4 @@ function checkWork() {
     }
 }
 
-eth.filter("pending", function (err, block) { checkWork(); });
+checkWorkSubscribe = eth.filter("pending", function (err, block) { checkWork(); });
