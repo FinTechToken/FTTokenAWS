@@ -3,7 +3,8 @@
   { account: PublicEthereumAddress, token: FTToken_Token } // Responds With Any Unclaimed Sent Hashes AND Hashes Received { sent:[], received:[] }
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo } // Creates and Responds with Hash
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo, refer: true } // Creates and Responds with Hash IF unique phone
-  { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record  
+  { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record
+  { account: PublicEthereumAddress, token: FTToken_Token, bankTrans: true } // responds with all bank transactions
 
   { master: PublicEthereumAddress, token: FTToken_Token, delete: Hash } //Hash that was fulfilled. (respond with referee:newAccount,referer:senderAccount) OR respond "Deleted"
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash } //text phone and update Hash
@@ -120,7 +121,7 @@ exports.handler = (event, context, callback) => {
     return {
       TableName: process.env.TABLE_NAME_CB,
       Item: {
-        [process.env.KEY_NAME_CB]: request.account,
+        [process.env.KEY_NAME_CB]: "0x" + request.account,
         [process.env.KEY_NAME_CB2]: "0",
         Amount: "0",
         Deposit: true,
@@ -147,8 +148,8 @@ function findAndRespondWithHash(err, data) {
       }
       else
         respondToRequest('Not Proper Format', null);
-    } else if(request.deposit) {
-      documentClient.query(searchForDeposits(), insertDeposit);
+    } else if(request.deposit || request.bankTrans) {
+      documentClient.query(searchForDeposits(), getBankTransOrInsertDeposit);
     } else {
       documentClient.query(searchForSentHash(), getSentHashAndGetPhoneAndRespondWithHash);
     }
@@ -185,24 +186,33 @@ function findAndRespondWithHash(err, data) {
   function searchForDeposits() {
     return {
       TableName: process.env.TABLE_NAME_CB,
-      KeyConditionExpression: process.env.KEY_NAME_CB +' = :a and ' + process.env.KEY_NAME_CB2+' = :b',
-      FilterExpression: "Deposit=:c",
+      KeyConditionExpression: process.env.KEY_NAME_CB +' = :a',
       ExpressionAttributeValues: {
-        ':a': request.account,
-        ':b': "0",
-        ':c': true
+        ':a': '0x' + request.account
       }
     };
   }
 
-  function insertDeposit(err, data) {
+  function getBankTransOrInsertDeposit(err, data) {
     if(err)
       respondToRequest('DB Error', null);
     else {
-      if(data.Count)
-        respondToRequest('AlreadyExists', null);
-      else 
-      documentClient.put(insertNewDeposit(), respondWithBankSuccess);
+      if(request.deposit) {
+        var bankTranExists = false;
+        if(data.Count) {
+          data.Items.forEach( (bankTran, index) => {
+            if(bankTran.Deposit && bankTran[process.env.KEY_NAME_CB2] == "0")
+              bankTranExists = true;
+          });
+        }
+        if(bankTranExists)
+            respondToRequest('AlreadyExists', null);
+        else
+          documentClient.put(insertNewDeposit(), respondWithBankSuccess);
+      } else if(request.bankTrans) {
+        respondToRequest(null, data.Items);
+      } else
+        respondToRequest('DB Error', null);
     }
   }
 
