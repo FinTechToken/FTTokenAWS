@@ -3,9 +3,12 @@
   { account: PublicEthereumAddress, token: FTToken_Token } // Responds With Any Unclaimed Sent Hashes AND Hashes Received { sent:[], received:[] }
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo } // Creates and Responds with Hash
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo, refer: true } // Creates and Responds with Hash IF unique phone
+  { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record  
+
   { master: PublicEthereumAddress, token: FTToken_Token, delete: Hash } //Hash that was fulfilled. (respond with referee:newAccount,referer:senderAccount) OR respond "Deleted"
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash } //text phone and update Hash
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash, refer: true } //text phone with invite message and update Hash
+  { master: PublicEthereumAddress, token: FTToken_Token, withdrawAddress: address, withdrawAmount: amount, withdrawBlock: block } //text phone with invite message and update Hash
 */
 var AWS = require('aws-sdk'),
   uuid = require('uuid/v4'),
@@ -48,6 +51,8 @@ exports.handler = (event, context, callback) => {
       documentClient.get(searchForToken(), findAndRespondWithHash);
     else if(isValidMasterRequest())
       documentClient.get(searchForHash(), textPhoneAndUpdateHashORDeleteHash);
+    else if(isValidMasterBankRequest())
+      documentClient.query(searchForBank(), insertBank);
     else
       respondToRequest('Not Proper Format', null);
   }
@@ -57,7 +62,11 @@ exports.handler = (event, context, callback) => {
   }
   
   function isValidMasterRequest() {
-    return (request.master == process.env.MASTER && request.token == process.env.MASTER_TOKEN && (request.funded || request.delete) );
+    return (request.master == process.env.MASTER && request.token == process.env.MASTER_TOKEN && (request.funded || request.delete ) );
+  } 
+
+  function isValidMasterBankRequest() {
+    return (request.master == process.env.MASTER && request.token == process.env.MASTER_TOKEN && request.withdrawAmount && request.withdrawAddress && request.withdrawBlock );
   } 
 
   function searchForToken() {
@@ -69,6 +78,63 @@ exports.handler = (event, context, callback) => {
     };
   }
 
+  function searchForBank() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      KeyConditionExpression: process.env.KEY_NAME_CB +' = :a and ' + process.env.KEY_NAME_CB2+' = :b',
+      FilterExpression: "Withdraw=:c",
+      ExpressionAttributeValues: {
+        ':a': request.withdrawAddress,
+        ':b': request.withdrawBlock,
+        ':c': true
+      }
+    };
+  }
+
+  function insertBank(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else {
+      if(data.Count) {
+        respondToRequest('AlreadyExist', null);
+      }
+      else
+        documentClient.put(insertBankTrans(), respondWithBankSuccess);
+    }
+  }
+
+  function insertBankTrans() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      Item: {
+        [process.env.KEY_NAME_CB]: request.withdrawAddress,
+        [process.env.KEY_NAME_CB2]: request.withdrawBlock,
+        Amount: request.withdrawAmount,
+        Withdraw: true,
+        Processed: false
+      }
+    };
+  }
+
+  function insertNewDeposit() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      Item: {
+        [process.env.KEY_NAME_CB]: request.account,
+        [process.env.KEY_NAME_CB2]: "0",
+        Amount: "0",
+        Deposit: true,
+        Processed: false
+      }
+    };
+  }
+
+  function respondWithBankSuccess(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else
+      respondToRequest(null,'BankEntry');
+  }
 
 function findAndRespondWithHash(err, data) {
   if(err) 
@@ -81,6 +147,8 @@ function findAndRespondWithHash(err, data) {
       }
       else
         respondToRequest('Not Proper Format', null);
+    } else if(request.deposit) {
+      documentClient.query(searchForDeposits(), insertDeposit);
     } else {
       documentClient.query(searchForSentHash(), getSentHashAndGetPhoneAndRespondWithHash);
     }
@@ -113,6 +181,30 @@ function findAndRespondWithHash(err, data) {
         }
       };
     }
+
+  function searchForDeposits() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      KeyConditionExpression: process.env.KEY_NAME_CB +' = :a and ' + process.env.KEY_NAME_CB2+' = :b',
+      FilterExpression: "Deposit=:c",
+      ExpressionAttributeValues: {
+        ':a': request.account,
+        ':b': "0",
+        ':c': true
+      }
+    };
+  }
+
+  function insertDeposit(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else {
+      if(data.Count)
+        respondToRequest('AlreadyExists', null);
+      else 
+      documentClient.put(insertNewDeposit(), respondWithBankSuccess);
+    }
+  }
 
   function createAndRespondWithNewHashIfNoPhone(err, data) {
     if(err)
@@ -314,14 +406,14 @@ function searchForHash() {
 
     function respondWithReferInfo(err, data) {
       if(err)
-        respondToRequest(err, null);
+        respondToRequest('DB Error', null);
       else
         respondToRequest(null, "referer:" + sender + ":referee:" + referee);
     }
 
     function respondWithSuccess(err, data) {
       if(err)
-        respondToRequest(err, null);
+        respondToRequest('DB Error', null);
       else
         respondToRequest(null,'Deleted');
     }
