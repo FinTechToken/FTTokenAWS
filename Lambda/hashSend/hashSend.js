@@ -6,6 +6,8 @@
   { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record
   { account: PublicEthereumAddress, token: FTToken_Token, bankTrans: true } // responds with all bank transactions
 
+  { account: PublicEthereumAddress, token: FTToken_Token, homeAddress: value, name: value } // inserts homeAddress and name of user.
+
   { master: PublicEthereumAddress, token: FTToken_Token, delete: Hash } //Hash that was fulfilled. (respond with referee:newAccount,referer:senderAccount) OR respond "Deleted"
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash } //text phone and update Hash
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash, refer: true } //text phone with invite message and update Hash
@@ -150,6 +152,8 @@ function findAndRespondWithHash(err, data) {
         respondToRequest('Not Proper Format', null);
     } else if(request.deposit || request.bankTrans) {
       documentClient.query(searchForDeposits(), getBankTransOrInsertDeposit);
+    } else if(request.homeAddress && request.name) {
+      documentClient.get(searchForAccount(), insertAddressIfBlank);
     } else {
       documentClient.query(searchForSentHash(), getSentHashAndGetPhoneAndRespondWithHash);
     }
@@ -213,6 +217,17 @@ function findAndRespondWithHash(err, data) {
         respondToRequest(null, data.Items);
       } else
         respondToRequest('DB Error', null);
+    }
+  }
+
+  function insertAddressIfBlank(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else {
+      if(data.Item && !data.Item.HomeAddress && !data.Item.MyName)
+        documentClient.update(updateNewAddressName(), respondWithAddressSuccess);
+      else
+        respondToRequest('AlreadyExists', null);
     }
   }
 
@@ -318,11 +333,11 @@ function findAndRespondWithHash(err, data) {
           response.sent[index] = item[process.env.KEY_NAME_HASH];
         });
       }
-      documentClient.get(searchForPhone(), getPhoneAndRespondWithHash);
+      documentClient.get(searchForAccount(), getPhoneAndRespondWithHash);
     }
   }
 
-    function searchForPhone() {
+    function searchForAccount() {
       return {
         TableName: process.env.TABLE_NAME,
         Key: {[process.env.KEY_NAME]: request.account}
@@ -426,6 +441,27 @@ function searchForHash() {
         respondToRequest('DB Error', null);
       else
         respondToRequest(null,'Deleted');
+    }
+
+    function respondWithAddressSuccess(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
+        respondToRequest(null,'Inserted');
+    }
+
+    function updateNewAddressName() {
+      return {
+        TableName: process.env.TABLE_NAME,
+        Key: {
+          [process.env.KEY_NAME]: request.account
+        },
+        UpdateExpression: "SET HomeAddress=:b, MyName=:c",
+        ExpressionAttributeValues:{
+            ":b":encryptOld(request.homeAddress),
+            ":c":encryptOld(request.name)
+        }
+      };
     }
 
     function updateHashWithText() {

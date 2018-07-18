@@ -1,8 +1,8 @@
 'use strict';
 /*
-  { account: PublicEtherAddress, token: FTToken_Token } // Get New Token and Keys within time
+  { account: PublicEtherAddress, token: FTToken_Token } // Get New Token and Keys and name/address within time
   { account: PublicEtherAddress, token: FTToken_Token, expire: true } // Expire the token
-  { account: PublicEtherAddress, token: FTToken_Token, phrase: Pass_Phrase } // Get New Token outside of time
+  { account: PublicEtherAddress, token: FTToken_Token, phrase: Pass_Phrase } // Get New Token and name/address outside of time
 */
 var AWS = require('aws-sdk'),
 	uuid = require('uuid/v4'),
@@ -20,6 +20,7 @@ var AWS = require('aws-sdk'),
   enc_pk,
   theTokenDate,
   respondToRequest, 
+  myData,
   request;
 
 exports.refreshToken = function(event, context, callback) {
@@ -29,6 +30,7 @@ exports.refreshToken = function(event, context, callback) {
 	}
 
 	respondToRequest = callback;
+	myData="";
 	request = event;
   newToken = uuid();
   now = new Date();
@@ -57,7 +59,7 @@ function searchForToken() {
 function refreshTokenIfAccountTokenMatch(err, data) {
 	if(err)
 		respondToRequest('DB Error', null);
-	else if(isAccountTokenMatch(data.Item))
+	else if(isAccountTokenMatch(data.Item)) 
     getAccountAndRefreshToken(data.Item);
   else
     respondToRequest('DB Error', null);
@@ -85,11 +87,12 @@ function refreshTokenIfAccountTokenMatch(err, data) {
     if(err)
       respondToRequest('DB Error', null);
     else if(data.Item) {
+      myData = data.Item;
       enc_id = data.Item.Encrypted_ID;
       enc_pk = data.Item.Encrypted_PrivateKey;
       if(isRecentToken(theTokenDate)) {
         if(request.expire)
-          documentClient.put(putNewToken(twentyMinutesAgo), deleteOldTokenAndRespondWithToken);
+          documentClient.put(putNewToken(twentyMinutesAgo), deleteOldTokenAndRespondWithTokenNoAddress);
         else
           documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithKeysAndToken);
       } else {
@@ -140,6 +143,13 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       else
         documentClient.delete(deleteOldToken(), respondWithToken);
     }
+    
+    function deleteOldTokenAndRespondWithTokenNoAddress(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
+        documentClient.delete(deleteOldToken(), respondWithJustToken);
+    }
 
       function deleteOldToken() {
         return {
@@ -154,6 +164,13 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       if(err)
         respondToRequest('DB Error', null);
       else
+        respondToRequest(null, {token: newToken, homeAddress: decrypt(myData.HomeAddress), name: decrypt(myData.MyName)});	
+    }
+    
+    function respondWithJustToken(err, data) {
+      if(err)
+        respondToRequest('DB Error', null);
+      else
         respondToRequest(null, {token: newToken});	
     }
 
@@ -165,7 +182,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       if(err)
         respondToRequest('DB Error' + JSON.stringify(err, null, 2), null);
       else
-        respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk)});	
+        respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk), homeAddress: decrypt(myData.HomeAddress), name: decrypt(myData.MyName)});	
     }
 
     function respondWithTokenAndEnc_ID() {
@@ -174,7 +191,10 @@ function refreshTokenIfAccountTokenMatch(err, data) {
 
  
 function decrypt(text){
-  return crypto.createDecipher(cryptAlgorithm,password).update(text,'hex','utf8');
+  if(text)
+    return crypto.createDecipher(cryptAlgorithm,password).update(text,'hex','utf8');
+  else
+    return "";
 }
 
 function getHash(text){
