@@ -2,3 +2,5 @@
 node_modules/
 /TestChain/scripts/sendHash.js
 TestChain/npm-debug\.log
+
+Lambda/hashSend/package-lock\.json
