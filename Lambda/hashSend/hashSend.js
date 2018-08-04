@@ -5,6 +5,9 @@
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo, refer: true } // Creates and Responds with Hash IF unique phone
   { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record
   { account: PublicEthereumAddress, token: FTToken_Token, bankTrans: true } // responds with all bank transactions
+  
+  { account: PublicEthereumAddress, token: FTToken_Token, import: true, crypto: cryptoIndex } // Creates an unprocessed import record/address or responds with existing one.
+  // cryptoIndex ETH=1
 
   { account: PublicEthereumAddress, token: FTToken_Token, homeAddress: value, name: value } // inserts homeAddress and name of user.
 
@@ -21,6 +24,7 @@ var AWS = require('aws-sdk'),
 	crypto = require('crypto'),
   twilio = require('twilio'),
   biguint = require('biguint-format'),
+  ethUtils = require('ethereumjs-util'),
   client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
   documentClient = new AWS.DynamoDB.DocumentClient(),
   now,
@@ -132,6 +136,27 @@ exports.handler = (event, context, callback) => {
     };
   }
 
+  function insertNewImportAddress() {
+    newHash = '';
+    var PrivateAddress = '';
+    if(request.crypto == 1) { // New Eth Key/Pair
+      PrivateAddress = getPrivateAddress(newUUID);
+      newHash = getPublicEthAddress(PrivateAddress);
+    }
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      Item: {
+        [process.env.KEY_NAME_CB]: "0x" + request.account,
+        [process.env.KEY_NAME_CB2]: request.crypto,
+        ImportAddress: newHash,
+        [process.env.KEY_NAME_CB_PRIVATE]: encrypt(PrivateAddress),
+        Amount: "0",
+        Import: true,
+        Processed: false
+      }
+    };
+  }
+
   function respondWithBankSuccess(err, data) {
     if(err)
       respondToRequest('DB Error', null);
@@ -150,8 +175,8 @@ function findAndRespondWithHash(err, data) {
       }
       else
         respondToRequest('Not Proper Format', null);
-    } else if(request.deposit || request.bankTrans) {
-      documentClient.query(searchForDeposits(), getBankTransOrInsertDeposit);
+    } else if(request.deposit || request.bankTrans || request.import) {
+      documentClient.query(searchForDeposits(), getBankTransImportOrInsertDeposit);
     } else if(request.homeAddress && request.name) {
       documentClient.get(searchForAccount(), insertAddressIfBlank);
     } else {
@@ -197,11 +222,26 @@ function findAndRespondWithHash(err, data) {
     };
   }
 
-  function getBankTransOrInsertDeposit(err, data) {
+  function getBankTransImportOrInsertDeposit(err, data) {
     if(err)
       respondToRequest('DB Error', null);
     else {
-      if(request.deposit) {
+      if(request.import) {
+        var cryptoTranExists = false;
+        var cryptoTranAddress = '';
+        if(data.Count) {
+          data.Items.forEach( (importTran, index) => {
+            if(importTran.Import && importTran[process.env.KEY_NAME_CB2] == request.crypto ) {
+              cryptoTranExists = true;
+              cryptoTranAddress = importTran.ImportAddress;
+            }
+          });
+        }
+        if(cryptoTranExists)
+          respondToRequest(null,cryptoTranAddress);
+        else
+          documentClient.put(insertNewImportAddress(), respondWithNewHash);
+      } else if(request.deposit) {
         var bankTranExists = false;
         if(data.Count) {
           data.Items.forEach( (bankTran, index) => {
@@ -516,6 +556,11 @@ function decryptOld(text) {
   return crypto.createDecipher(cryptAlgorithm,passwordOld).update(text,'hex','utf8');
 }
 
-function getHash(text) {
+function getPrivateAddress(text) {
   return crypto.createHmac(hashAlgorithm, key).update(text).digest('hex');
+}
+
+function getPublicEthAddress(key) {
+  //var publicKey = ethUtils.privateToPublic('0x'+key).toString('hex');
+  return ethUtils.privateToAddress('0x'+key).toString('hex');
 }
