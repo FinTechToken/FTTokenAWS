@@ -5,12 +5,11 @@
   { account: PublicEthereumAddress, token: FTToken_Token, phone: PhoneToSendHashTo, refer: true } // Creates and Responds with Hash IF unique phone
   { account: PublicEthereumAddress, token: FTToken_Token, deposit: true } // Creates an unprocessed deposit record
   { account: PublicEthereumAddress, token: FTToken_Token, bankTrans: true } // responds with all bank transactions
-  
+  { account: PublicEthereumAddress, token: FTToken_Token, homeAddress: value, name: value } // inserts homeAddress and name of user.
   { account: PublicEthereumAddress, token: FTToken_Token, import: true, crypto: cryptoIndex } // Creates an unprocessed import record/address or responds with existing one.
   // cryptoIndex ETH=1
 
-  { account: PublicEthereumAddress, token: FTToken_Token, homeAddress: value, name: value } // inserts homeAddress and name of user.
-
+  { master: PublicEthereumAddress, token: FTToken_Token, export: true, exportAddress: address, exportAccount: exportAccount, block: FTTblock, value: value, crypto: cryptoIndex } //Creates an unprocessed export record/address
   { master: PublicEthereumAddress, token: FTToken_Token, delete: Hash } //Hash that was fulfilled. (respond with referee:newAccount,referer:senderAccount) OR respond "Deleted"
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash } //text phone and update Hash
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash, refer: true } //text phone with invite message and update Hash
@@ -60,6 +59,8 @@ exports.handler = (event, context, callback) => {
       documentClient.get(searchForHash(), textPhoneAndUpdateHashORDeleteHash);
     else if(isValidMasterBankRequest())
       documentClient.query(searchForBank(), insertBank);
+    else if(isValidMasterExportRequest())
+      documentClient.get(searchForExport(), insertExportIfNotExist);
     else
       respondToRequest('Not Proper Format', null);
   }
@@ -76,6 +77,10 @@ exports.handler = (event, context, callback) => {
     return (request.master == process.env.MASTER && request.token == process.env.MASTER_TOKEN && request.withdrawAmount && request.withdrawAddress && request.withdrawBlock );
   } 
 
+  function isValidMasterExportRequest() {
+    return (request.master == process.env.MASTER && request.token == process.env.MASTER_TOKEN && request.export );
+  } 
+
   function searchForToken() {
     return {
       TableName: process.env.TABLE_NAME_TOKEN,
@@ -83,6 +88,16 @@ exports.handler = (event, context, callback) => {
         [process.env.KEY_NAME_TOKEN]: request.token
       }
     };
+  }
+
+  function searchForExport() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      Key: {
+        [process.env.KEY_NAME_CB]: "0x" + request.exportAccount,
+        [process.env.KEY_NAME_CB2]: request.block
+      }
+    }
   }
 
   function searchForBank() {
@@ -98,13 +113,23 @@ exports.handler = (event, context, callback) => {
     };
   }
 
+  function insertExportIfNotExist(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else {
+      if(data.Item)
+        respondToRequest('AlreadyExist', null);
+      else
+        documentClient.put(insertExportTrans(), respondWithExportSuccess);
+    }
+  }
+
   function insertBank(err, data) {
     if(err)
       respondToRequest('DB Error', null);
     else {
-      if(data.Count) {
+      if(data.Count)
         respondToRequest('AlreadyExist', null);
-      }
       else
         documentClient.put(insertBankTrans(), respondWithBankSuccess);
     }
@@ -136,6 +161,21 @@ exports.handler = (event, context, callback) => {
     };
   }
 
+  function insertExportTrans() {
+    return {
+      TableName: process.env.TABLE_NAME_CB,
+      Item: {
+        [process.env.KEY_NAME_CB]: "0x" + request.exportAccount,
+        [process.env.KEY_NAME_CB2]: request.block,
+        ExportAddress: request.exportAddress,
+        Amount: request.value,
+        Export: true,
+        Processed: false,
+        Crypto: request.crypto
+      }
+    }
+  }
+
   function insertNewImportAddress() {
     newHash = '';
     var PrivateAddress = '';
@@ -162,6 +202,13 @@ exports.handler = (event, context, callback) => {
       respondToRequest('DB Error', null);
     else
       respondToRequest(null,'BankEntry');
+  }
+
+  function respondWithExportSuccess(err, data) {
+    if(err)
+      respondToRequest('DB Error', null);
+    else 
+      respondToRequest(null, 'ExportEntry');
   }
 
 function findAndRespondWithHash(err, data) {
