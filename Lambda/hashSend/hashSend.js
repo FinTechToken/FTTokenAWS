@@ -7,7 +7,7 @@
   { account: PublicEthereumAddress, token: FTToken_Token, bankTrans: true } // responds with all bank transactions
   { account: PublicEthereumAddress, token: FTToken_Token, homeAddress: value, name: value } // inserts homeAddress and name of user.
   { account: PublicEthereumAddress, token: FTToken_Token, import: true, crypto: cryptoIndex } // Creates an unprocessed import record/address or responds with existing one.
-  // cryptoIndex ETH=1
+  // cryptoIndex ETH=1,BTC=2
 
   { master: PublicEthereumAddress, token: FTToken_Token, export: true, exportAddress: address, exportAccount: exportAccount, block: FTTblock, value: value, crypto: cryptoIndex } //Creates an unprocessed export record/address
   { master: PublicEthereumAddress, token: FTToken_Token, delete: Hash } //Hash that was fulfilled. (respond with referee:newAccount,referer:senderAccount) OR respond "Deleted"
@@ -15,22 +15,29 @@
   { master: PublicEthereumAddress, token: FTToken_Token, funded: Hash, refer: true } //text phone with invite message and update Hash
   { master: PublicEthereumAddress, token: FTToken_Token, withdrawAddress: address, withdrawAmount: amount, withdrawBlock: block } //text phone with invite message and update Hash
 */
-var AWS = require('aws-sdk'),
+
+const AWS = require('aws-sdk'),
   uuid = require('uuid/v4'),
   keccak256 = require('js-sha3').keccak256,
+  sha256 = require('js-sha256'),
+  Base58 = require('base58-native'),
+  biguint = require('big-integer'),
+  ripemd160 = require('ripemd160'),
+  ecdsa = require('elliptic').ec,
   hashAlgorithm = 'sha256',
   key = process.env.HASH_KEY,
 	crypto = require('crypto'),
   twilio = require('twilio'),
-  biguint = require('biguint-format'),
   ethUtils = require('ethereumjs-util'),
-  client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
+  password = process.env.PASSWORD,
+  passwordOld = process.env.PASSWORDOLD;
+
+  var client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
   documentClient = new AWS.DynamoDB.DocumentClient(),
   now,
   twentyMinutesAgo,
   cryptAlgorithm = 'aes-256-ctr',
-  password = process.env.PASSWORD,
-  passwordOld = process.env.PASSWORDOLD,
+  ec = new ecdsa('secp256k1'),
   newUUID,
   newHash,
   request,
@@ -180,8 +187,11 @@ exports.handler = (event, context, callback) => {
     newHash = '';
     var PrivateAddress = '';
     if(request.crypto == 1) { // New Eth Key/Pair
-      PrivateAddress = getPrivateAddress(newUUID);
+      PrivateAddress = getPrivateEtherAddress(newUUID);
       newHash = getPublicEthAddress(PrivateAddress);
+    } else if(request.crypto == 2) { // New BitCoin Key/Pair
+      PrivateAddress = getPrivateBitCoinAddress();
+      newHash = getPublicBitCoinAddress(PrivateAddress);
     }
     return {
       TableName: process.env.TABLE_NAME_CB,
@@ -603,11 +613,54 @@ function decryptOld(text) {
   return crypto.createDecipher(cryptAlgorithm,passwordOld).update(text,'hex','utf8');
 }
 
-function getPrivateAddress(text) {
+function getPrivateEtherAddress(text) {
   return crypto.createHmac(hashAlgorithm, key).update(text).digest('hex');
 }
 
 function getPublicEthAddress(key) {
   //var publicKey = ethUtils.privateToPublic('0x'+key).toString('hex');
   return ethUtils.privateToAddress('0x'+key).toString('hex');
+}
+
+function getPrivateBitCoinAddress() {
+  var maxKey = "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364140";
+  var privateKey = getPrivateEtherAddress(newUUID);
+  while(biguint(maxKey,16).compare(biguint(privateKey,16))<0) {
+    newUUID = uuid();
+    privateKey = getPrivateEtherAddress(newUUID).substring(0,64);
+  }
+  //add 0x80 to the front, https://en.bitcoin.it/wiki/List_of_address_prefixes
+  var privateKeyAndVersion = "80" + privateKey;
+  var firstSHA = sha256(Buffer.from(privateKeyAndVersion,"hex"));
+  var secondSHA = sha256(Buffer.from(firstSHA,"hex"));
+  var checksum = secondSHA.substr(0, 8).toUpperCase();
+  //append checksum to end of the private key and version
+  var keyWithChecksum = privateKeyAndVersion + checksum;
+  return Base58.encode(Buffer.from(keyWithChecksum,"hex"));
+}
+
+function privateKeyFromWIF(privateKeyWIF) {
+  var privateKey =  Base58.decode(privateKeyWIF).toString('hex');
+  return privateKey.substring(2,privateKey.length - 8);
+}
+
+function getPublicBitCoinAddress(privateKeyWIF) {
+  var privateKey = privateKeyFromWIF(privateKeyWIF);
+  const keys = ec.keyFromPrivate(privateKey);
+  const publicKey = keys.getPublic('hex');
+  var hash = sha256(Buffer.from(publicKey, 'hex'));
+  var publicKeyHash = new ripemd160().update(Buffer.from(hash, 'hex')).digest();
+  // step 1 - add prefix "00" in hex
+  var step1 = "00" + publicKeyHash.toString('hex');
+  // step 2 - create SHA256 hash of step 1
+  var step2 = sha256(Buffer.from(step1,"hex"));
+  // step 3 - create SHA256 hash of step 2
+  var step3 = sha256(Buffer.from(step2, 'hex'));
+  // step 4 - find the 1st byte of step 3 - save as "checksum"
+  var checksum = step3.substring(0, 8);
+  // step 5 - add step 1 + checksum
+  var step4 = step1 + checksum;
+  // return base 58 encoding of step 5
+  var address = Base58.encode(Buffer.from(step4, 'hex'));
+  return address;
 }

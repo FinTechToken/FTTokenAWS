@@ -9,10 +9,13 @@
   "author": "FinTechToken",
   "license": "",
   "dependencies": {
-    "js-sha3": "0.7.0"
+    "js-sha3": "0.7.0",
+    "js-sha256": "0.9.0",
+    "base58-native": "0.1.4",
+    "big-integer": "1.6.34",
+    "ripemd160": "2.0.2",
+    "elliptic": "6.4.1"
   },
-  "devDependencies": {
-  },
+  "devDependencies": {},
   "repository": {}
 }
-
