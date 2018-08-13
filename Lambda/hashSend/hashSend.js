@@ -198,6 +198,7 @@ exports.handler = (event, context, callback) => {
       Item: {
         [process.env.KEY_NAME_CB]: "0x" + request.account,
         [process.env.KEY_NAME_CB2]: request.crypto,
+        Crypto: request.crypto,
         ImportAddress: newHash,
         [process.env.KEY_NAME_CB_PRIVATE]: encrypt(PrivateAddress),
         Amount: "0",
