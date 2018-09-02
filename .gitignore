@@ -4,3 +4,5 @@ node_modules/
 TestChain/npm-debug\.log
 
 Lambda/hashSend/package-lock\.json
+
+Lambda/verifyPhone/package-lock\.json
