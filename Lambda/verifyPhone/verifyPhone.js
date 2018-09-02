@@ -9,21 +9,24 @@ var AWS = require('aws-sdk'),
 	crypto = require('crypto'),
   twilio = require('twilio'),
   biguint = require('biguint-format'),
+  keccak256 = require('js-sha3').keccak256,
   client = new twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN),
   documentClient = new AWS.DynamoDB.DocumentClient(),
   now,
   twentyMinutesAgo,
   cryptAlgorithm = 'aes-256-ctr',
   password = process.env.PASSWORD,
+  passwordnew = process.env.PASSWORDNEW,
   newToken,
   newCode,
   request,
+  newHash,
   respondToRequest;
 
 exports.handler = (event, context, callback) => {
   respondToRequest = callback;
   request = event;
-  
+  newHash = false;
   now = new Date();
   twentyMinutesAgo = new Date();
   newToken = uuid();
@@ -112,7 +115,7 @@ function verifyPhone(err, data) {
       if(err)
         respondToRequest('DB Error', null);
       else
-        documentClient.update(makePhoneVerified(), addPhoneToMainDBAndRespondWithNewToken);
+        documentClient.update(makePhoneVerified(), addPhoneToMainDBAndRespondWithHashToken);
     }
 
       function makePhoneVerified() {
@@ -130,11 +133,11 @@ function verifyPhone(err, data) {
         };
       }
 
-      function addPhoneToMainDBAndRespondWithNewToken(err, data) {
+      function addPhoneToMainDBAndRespondWithHashToken(err, data) {
         if(err)
           respondToRequest('DB Error', null);
         else
-          documentClient.update(addNewPhoneToMainDB(), respondWithNewToken);
+          documentClient.update(addNewPhoneToMainDB(), createHashToken);
       }
 
         function addNewPhoneToMainDB() {
@@ -149,6 +152,57 @@ function verifyPhone(err, data) {
             }
           };
         }
+
+        function createHashToken(err, data) {
+          if(err)
+            respondToRequest('DB Error', null);
+          else
+            documentClient.query(doesPhoneExistInHash(), createAndRespondWithNewHashIfNoPhoneHashAndToken);
+        }
+
+          function doesPhoneExistInHash() {
+            return {
+              TableName: process.env.TABLE_NAME_HASH,
+              IndexName: process.env.KEY_NAME_HASH_PHONE + '-index',
+              KeyConditionExpression: process.env.KEY_NAME_HASH_PHONE + ' = :a',
+              FilterExpression: "Refer=:b",
+              ExpressionAttributeValues: {
+                ':a': encryptNew(request.phone),
+                ':b': true
+              }
+            };
+          }
+
+          function createAndRespondWithNewHashIfNoPhoneHashAndToken(err, data) {
+            if(err)
+              respondToRequest('DB Error', null);
+            else {
+              if(data.Count) {
+                newHash = false;
+                documentClient.put(putToken(), deleteOldTokenAndRespondWithToken); //User exists
+              }
+              else {
+                newHash = true;
+                documentClient.put(putNewHash(), respondWithNewToken);
+              }
+            }
+          }
+
+            function putNewHash() {
+              newHash = keccak256(newToken);
+              return {
+                TableName: process.env.TABLE_NAME_HASH,
+                Item: {
+                  [process.env.KEY_NAME_HASH]: newHash,
+                  [process.env.KEY_NAME_HASH_SENDER]: encryptNew(request.account),
+                  [process.env.KEY_NAME_HASH_PHONE]: encryptNew(request.phone),
+                  HashCreateDate: now.toISOString(),
+                  UUID: encryptNew(newToken),
+                  Texted: true,
+                  Refer: true
+                }
+              };
+            }
 
         function respondWithNewToken(err, data) {
           if(err)
@@ -187,8 +241,12 @@ function verifyPhone(err, data) {
           function respondWithToken(err, data) {
             if(err)
               respondToRequest('DB Error', null);
-            else
-              respondToRequest(null, {account:request.account, token:newToken});
+            else {
+              if(newHash)
+                respondToRequest(null, {account:request.account, token:newToken, hash:true});
+              else
+                respondToRequest(null, {account:request.account, token:newToken});
+            }
           }
 
     function isRecentSMS(codeDate) {
@@ -300,6 +358,10 @@ function isValidToken(item) {
 
 function encrypt(text) {
   return crypto.createCipher(cryptAlgorithm,password).update(text,'utf8','hex');
+}
+
+function encryptNew(text) {
+  return crypto.createCipher(cryptAlgorithm,passwordnew).update(text,'utf8','hex');
 }
 
 function randomSixDigitCode() {
