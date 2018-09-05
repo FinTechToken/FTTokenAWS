@@ -94,7 +94,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
         if(request.expire)
           documentClient.put(putNewToken(twentyMinutesAgo), deleteOldTokenAndRespondWithTokenNoAddress);
         else
-          documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithKeysAndToken);
+          documentClient.update(updateToken(now), respondWithKeysAndToken);
       } else {
         if(hasCorrectPassPhrase(data.Item.Hashed_Phrase))
           documentClient.put(putNewToken(now), deleteOldTokenAndRespondWithToken);
@@ -130,12 +130,18 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       };
     }
 
-    function deleteOldTokenAndRespondWithKeysAndToken(err, data) {
-      if(err)
-        respondToRequest('DB Error', null);
-      else
-        documentClient.delete(deleteOldToken(), respondWithKeysAndToken);
-    }
+    function updateToken(time) {
+      return {
+        TableName: process.env.TABLE_NAME_TOKEN,
+        Key: {
+          [process.env.KEY_NAME_TOKEN]: request.token
+        },
+        UpdateExpression: "SET aTokenDate=:b",
+        ExpressionAttributeValues:{
+            ":b":time.toISOString()
+        }
+      };
+    } 
 
     function deleteOldTokenAndRespondWithToken(err, data) {
       if(err)
@@ -182,7 +188,7 @@ function refreshTokenIfAccountTokenMatch(err, data) {
       if(err)
         respondToRequest('DB Error' + JSON.stringify(err, null, 2), null);
       else
-        respondToRequest(null, {token: newToken, enc_id: enc_id, privateKey: decrypt(enc_pk), homeAddress: decrypt(myData.HomeAddress), name: decrypt(myData.MyName)});	
+        respondToRequest(null, {token: request.token, enc_id: enc_id, privateKey: decrypt(enc_pk), homeAddress: decrypt(myData.HomeAddress), name: decrypt(myData.MyName)});	
     }
 
     function respondWithTokenAndEnc_ID() {
