@@ -312,7 +312,20 @@ function findAndRespondWithHash(err, data) {
         else
           documentClient.put(insertNewDeposit(), respondWithBankSuccess);
       } else if(request.bankTrans) {
-        respondToRequest(null, data.Items);
+        var bankTrans=[];
+        if(data.Count) {
+          data.Items.forEach( (responseItem, index) => {
+            bankTrans[index] = {BlockNumber: responseItem.BlockNumber,
+            Amount: responseItem.Amount,
+            Processed: responseItem.Processed,
+            Crypto: responseItem.Crypto,
+            Deposit: responseItem.Deposit,
+            Withdraw: responseItem.Withdraw,
+            Export: responseItem.Export,
+            Import: responseItem.Import};
+          });
+        }
+        respondToRequest(null, bankTrans);
       } else
         respondToRequest('DB Error', null);
     }
